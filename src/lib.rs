@@ -6,16 +6,14 @@ use std::fmt;
 use std::error;
 use std::io;
 use core::result;
-use std::borrow;
 //use std::ops::Deref;
 use gimli::{self};
 use memmap;
 use regex;
 use std::collections::{HashSet,HashMap};
-use object::{self,Object, ObjectSection};
-use fallible_iterator::FallibleIterator;
-
-
+use object;
+//use fallible_iterator::FallibleIterator;
+mod parser;
 
 #[derive(Debug)]
 enum ErrorCode {
@@ -60,6 +58,11 @@ impl From<gimli::Error> for Error {
     }
 }
 
+impl From<object::Error> for Error {
+    fn from(err: object::Error) -> Self {
+        Error(ErrorImpl{code: ErrorCode::Object(err)})
+    }
+}
 
 
 // redefine result for easy usage
@@ -234,90 +237,16 @@ impl DebugInfoBuilder {
     /// parse the data in an existing object 
     pub fn parse_object<'input>(&self, object: &'input object::File<'input>) -> Result<DebugInfo>
     {
-
-        // most of the code in this function is based on the simple.rs example in the gimli crate
-        let endian = if object.is_little_endian() {
-            gimli::RunTimeEndian::Little
-        } else {
-            gimli::RunTimeEndian::Big
-        };
-        
-        let load_section = |id: gimli::SectionId| -> result::Result<borrow::Cow<[u8]>, gimli::Error> {
-            match object.section_by_name(id.name()) {
-                Some(ref section) => Ok(section
-                                        .uncompressed_data()
-                                        .unwrap_or(borrow::Cow::Borrowed(&[][..]))),
-                None => Ok(borrow::Cow::Borrowed(&[][..])),
-            }
-        };
-        // Load a supplementary section. We don't have a supplementary object file,
-        // so always return an empty slice.
-        let load_section_sup = |_| Ok(borrow::Cow::Borrowed(&[][..]));
-
-        // Load all of the sections.
-        let dwarf_cow = gimli::Dwarf::load(&load_section, &load_section_sup);
-        let dwarf_cow = dwarf_cow.map_err(|e| Error(ErrorImpl{code : ErrorCode::Gimli(e)}))?;
-
-        // Borrow a `Cow<[u8]>` to create an `EndianSlice`.
-        let borrow_section: &dyn for<'a> Fn(
-            &'a borrow::Cow<[u8]>,
-        ) -> gimli::EndianSlice<'a, gimli::RunTimeEndian> =
-            &|section| gimli::EndianSlice::new(&*section, endian);
-
-        // Create `EndianSlice`s for all of the sections.
-        let dwarf = dwarf_cow.borrow(&borrow_section);
-
-        self.parse_dwarf(&dwarf)
-    }
-
-    // they all fall into here
-    fn parse_dwarf<R:Reader>(&self, dwarf: &gimli::Dwarf<R>) -> Result<DebugInfo>
-    {
-
         // if the builder had an error during construction, return it now
         if let Some(e) = &self.error {
             return Err(Error(ErrorImpl{code : ErrorCode::Builder(e.clone())}));
         }
 
-        let types = HashMap::new();
-        let syms = HashMap::new();
-
-        // try to get the units from the dwarf file, or print error
-        let _result = dwarf.units()
-            .map(|h| dwarf.unit(h))
-            .map(|u|self.parse_unit(dwarf, &u)).collect::<Vec<()>>()?;
-        
-        Ok(DebugInfo{types, syms})
+        let parser = parser::DebugInfoParser::new(self, object)?;
+        parser.parse()
     }
 
-    // helper function to find matching symbols and types in a unit
-    fn parse_unit<R:Reader>(&self,
-                            dwarf: &gimli::Dwarf<R>,
-                            unit: &gimli::Unit<R>) -> result::Result<(), gimli::Error> {
-        let mut entries = unit.entries();
-        let mut depth = 0;
-        let mut padding;
-        while let Some((delta_depth, entry)) = entries.next_dfs()? {
-            depth += delta_depth;
-            assert!(depth >= 0);
-
-            padding = "  ".repeat(depth as usize);
-            
-            println!("{}<{}>{}", padding, depth, entry.tag().static_string().unwrap());
-            dump_attrs(&padding, entry.attrs(), dwarf)?;
-            
-        }
-        Ok(())
-    }
 }
-
-trait Reader: gimli::Reader<Offset = usize> + Send + Sync {}
-impl<'input, Endian> Reader for gimli::EndianSlice<'input, Endian> where
-    Endian: gimli::Endianity + Send + Sync
-{
-}
-
-
 
 /// represents a parsed  debug info, that types can be found in
 pub struct DebugInfo {
@@ -330,7 +259,7 @@ impl DebugInfo {
     fn get_by_sym(&self, _symbol:  &str ) -> Option<Type> {
         unimplemented!();
     }
-
+    /// lookup via symbols in the file 
     fn get_by_type(&self, _symbol:  &str ) -> Option<Type> {
         unimplemented!();
     }
@@ -368,34 +297,6 @@ mod tests {
     }
 }
 
-fn dump_attrs<'abbrev, 'me, 'unit, R: Reader>(
-    depth: &str,
-    mut attrs:  gimli::read::AttrsIter<'abbrev, 'me, 'unit, R>,
-    dwarf: &gimli::Dwarf<R>) -> result::Result<(), gimli::Error> {
-    
-    while let Some(attr) = attrs.next()? {
-        print!("{}", depth);
-        
-        if let Some(n) = attr.name().static_string() {
-            print!("{}: ", n);
-        } else {
-            print!("{:27}: ", attr.name());
-        }
-
-        if let gimli::AttributeValue::DebugStrRef(offset) = attr.value() {
-            let string = dwarf.debug_str.get_str(offset)?;
-            let string = string.to_string_lossy()?;
-            println!("{}", string);
-        } else if let Some(num) = attr.udata_value() {
-            println!("{}", num);
-        } else if let gimli::AttributeValue::UnitRef(offset) = attr.value() {
-            println!("unit+{:#x}", offset.0);
-        } else {
-            println!("??? {:?}", attr.value());
-        }
-    }
-    Ok(())
-}
 
 
 // determining if a type implements Serialize:::
