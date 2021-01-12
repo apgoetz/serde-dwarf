@@ -1,0 +1,16 @@
+[package]
+name = "serde_dwarf"
+version = "0.0.0"
+authors = ["agoetz <andy@andygoetz.org>"]
+edition = "2018"
+license = "Apache-2.0"
+repository = "https://github.com/apgoetz/serde_dwarf"
+homepage = "https://github.com/apgoetz/serde_dwarf"
+description = "Provide generic serde Deserializer for Non-self describing formats"
+
+[dependencies]
+fallible-iterator = "0.2.0"
+gimli = "0.23.0"
+memmap = "0.7.0"
+object = "0.23.0"
+regex = "1.4.3"
