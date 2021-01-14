@@ -1,17 +1,17 @@
 #![allow(dead_code)]
 
-use std::fs;
-use std::path::Path;
-use std::fmt;
-use std::error;
-use std::io;
 use core::result;
+use std::error;
+use std::fmt;
+use std::fs;
+use std::io;
+use std::path::Path;
 //use std::ops::Deref;
 use gimli::{self};
 use memmap;
-use regex;
-use std::collections::{HashSet,HashMap};
 use object;
+use regex;
+use std::collections::{HashMap, HashSet};
 //use fallible_iterator::FallibleIterator;
 mod parser;
 
@@ -26,10 +26,10 @@ enum ErrorCode {
 impl fmt::Display for ErrorCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ErrorCode::Io(e) => fmt::Display::fmt(e,f),
-            ErrorCode::Object(e) => fmt::Display::fmt(e,f),
-            ErrorCode::Gimli(e) => fmt::Display::fmt(e,f),
-            ErrorCode::Builder(e) => fmt::Display::fmt(e,f),
+            ErrorCode::Io(e) => fmt::Display::fmt(e, f),
+            ErrorCode::Object(e) => fmt::Display::fmt(e, f),
+            ErrorCode::Gimli(e) => fmt::Display::fmt(e, f),
+            ErrorCode::Builder(e) => fmt::Display::fmt(e, f),
         }
     }
 }
@@ -43,31 +43,37 @@ struct ErrorImpl {
 pub struct Error(ErrorImpl);
 
 impl Error {
-    fn io(e: io::Error) -> Self{
-        Error(ErrorImpl{code : ErrorCode::Io(e)})
+    fn io(e: io::Error) -> Self {
+        Error(ErrorImpl {
+            code: ErrorCode::Io(e),
+        })
     }
 
-    fn object(e: object::Error) -> Self{
-        Error(ErrorImpl{code : ErrorCode::Object(e)})
+    fn object(e: object::Error) -> Self {
+        Error(ErrorImpl {
+            code: ErrorCode::Object(e),
+        })
     }
 }
 
 impl From<gimli::Error> for Error {
     fn from(err: gimli::Error) -> Self {
-        Error(ErrorImpl{code: ErrorCode::Gimli(err)})
+        Error(ErrorImpl {
+            code: ErrorCode::Gimli(err),
+        })
     }
 }
 
 impl From<object::Error> for Error {
     fn from(err: object::Error) -> Self {
-        Error(ErrorImpl{code: ErrorCode::Object(err)})
+        Error(ErrorImpl {
+            code: ErrorCode::Object(err),
+        })
     }
 }
 
-
 // redefine result for easy usage
 type Result<T> = result::Result<T, Error>;
-
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -77,7 +83,7 @@ impl fmt::Display for Error {
 
 impl error::Error for Error {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        None                    // currently, none of our errors are connected to other errors
+        None // currently, none of our errors are connected to other errors
     }
 }
 
@@ -88,15 +94,12 @@ impl fmt::Debug for Error {
 }
 
 // represents any valid value that could be deserialized based on dwarf data
-// simliar to serde_json::Value, or rmpv::Value. 
-enum Value {
-}
+// simliar to serde_json::Value, or rmpv::Value.
+enum Value {}
 
 // wraps a non-self describing deserializer and and implements deserialize_any, using the type information to drive the underlying deserializer
 //
-struct TypeDeserializer {
-}
-
+struct TypeDeserializer {}
 
 enum Filter {
     NoFilter,
@@ -104,7 +107,6 @@ enum Filter {
     SymbolList(HashSet<String>),
     TypeRegex(regex::Regex),
     TypeList(HashSet<String>),
-
 }
 
 #[derive(Debug, Clone)]
@@ -112,45 +114,32 @@ struct BuilderError(regex::Error);
 
 impl fmt::Display for BuilderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0,f)
+        fmt::Display::fmt(&self.0, f)
     }
 }
 
 pub struct DebugInfoBuilder {
-    // should all types be included in the cache, or only those that
-    // implement Serialize
-    alltypes: bool,
     // should type signatures be tokenized, or left as strings
     store_tokens: bool,
-    // regex to match the 
+    // regex to match the
     filter: Filter,
     // did an error occur during construction
     error: Option<BuilderError>,
+    // should compressed data be supported
+    compressed: bool,
 }
 
 impl DebugInfoBuilder {
     /// make a builder
     pub fn new() -> Self {
-        DebugInfoBuilder{
-            alltypes: false,
+        DebugInfoBuilder {
             store_tokens: false,
             filter: Filter::NoFilter,
             error: None,
+            compressed: false,
         }
     }
 
-    /// Extract all types that are sized. Could be slow.
-    pub fn all_types<'a>(&'a mut self) -> &'a DebugInfoBuilder {
-        self.alltypes = true;
-        self
-    }
-
-    /// only extract types that implement serialize. Default behavior.
-    /// use `all_types()` to extract all sized types even if they do not implement serde::Serialize
-    pub fn only_serialize<'a>(&'a mut self) -> &'a DebugInfoBuilder {
-        self.alltypes = false;
-        self
-    }
     /// cache types as tokenstreams instead of strings.
     /// if not selected, lookups for types must match the string in the debug info.
     /// could slow down performance, not default
@@ -179,10 +168,13 @@ impl DebugInfoBuilder {
         self
     }
 
-    /// specfiy a list of strings. types in debuginfo must match one of
-    /// the listed strings in order to be extracted
-    pub fn filter_type_list<'a,I>(&'a mut self, i: I) -> &'a DebugInfoBuilder
-        where I: Iterator<Item=String> {
+    /// specfiy a list of strings. types in debuginfo must match one
+    /// of the listed strings in order to be extracted. Type must also
+    /// implement serde::Serialize
+    pub fn filter_type_list<'a, I>(&'a mut self, i: I) -> &'a DebugInfoBuilder
+    where
+        I: Iterator<Item = String>,
+    {
         self.filter = Filter::TypeList(i.collect());
         self
     }
@@ -202,102 +194,109 @@ impl DebugInfoBuilder {
 
     /// specfiy a list of strings. symbols in debuginfo must match one of
     /// the listed strings in order to be extracted
-    pub fn filter_sym_list<'a,I>(&'a mut self, i: I) -> &'a DebugInfoBuilder
-        where I: Iterator<Item=String> {
+    pub fn filter_sym_list<'a, I>(&'a mut self, i: I) -> &'a DebugInfoBuilder
+    where
+        I: Iterator<Item = String>,
+    {
         self.filter = Filter::SymbolList(i.collect());
         self
     }
 
-
-
     /// Parse file located at the given path
-    pub fn parse_path<P: AsRef<Path>>(&self, path: P) -> Result<DebugInfo>
-    {
+    pub fn parse_path<P: AsRef<Path>>(&self, path: P) -> Result<DebugInfo> {
         let file = fs::File::open(path).map_err(|e| Error::io(e))?;
         self.parse_file(&file)
     }
 
-    
     /// Parse the data in an opened file handle
-    pub fn parse_file(&self, file: &fs::File) -> Result<DebugInfo>
-    {
-        let mmap = unsafe {memmap::Mmap::map(&file).map_err(|e| Error::io(e))? };
+    pub fn parse_file(&self, file: &fs::File) -> Result<DebugInfo> {
+        let mmap = unsafe { memmap::Mmap::map(&file).map_err(|e| Error::io(e))? };
         self.parse_bytes(&mmap)
     }
 
-
     /// parse the data in a byte slice
-    pub fn parse_bytes(&self, bytes: &[u8]) -> Result<DebugInfo>
-    {
-        let object = object::File::parse(bytes).map_err(|e| Error(ErrorImpl{code : ErrorCode::Object(e)}))?;
+    pub fn parse_bytes(&self, bytes: &[u8]) -> Result<DebugInfo> {
+        let object = object::File::parse(bytes).map_err(|e| {
+            Error(ErrorImpl {
+                code: ErrorCode::Object(e),
+            })
+        })?;
         self.parse_object(&object)
     }
 
-    
-    /// parse the data in an existing object 
-    pub fn parse_object<'input>(&self, object: &'input object::File<'input>) -> Result<DebugInfo>
-    {
+    /// parse the data in an existing object
+    pub fn parse_object<'input>(&self, object: &'input object::File<'input>) -> Result<DebugInfo> {
         // if the builder had an error during construction, return it now
         if let Some(e) = &self.error {
-            return Err(Error(ErrorImpl{code : ErrorCode::Builder(e.clone())}));
+            return Err(Error(ErrorImpl {
+                code: ErrorCode::Builder(e.clone()),
+            }));
+        }
+
+        if self.compressed {
+            todo!();
         }
 
         let parser = parser::DebugInfoParser::new(self, object)?;
         parser.parse()
     }
 
+    /// allow parsing compressed debug info.
+    /// This requires the debuginfo sections to be copied out, which could slow processing down
+    /// Defaults to not allow compress
+    pub fn allow_compressed<'a>(&'a mut self) -> &'a DebugInfoBuilder {
+        self.compressed = true;
+        self
+    }
+    /// do not allow parsing compressed debug info.  debug info can be
+    /// referenced directly from mmap'ed file, potentially speeding up
+    /// processing. compressed debug info may fail silently. default
+    /// behavior. opposite of `allow_compressed()`
+    pub fn deny_compressed<'a>(&'a mut self) -> &'a DebugInfoBuilder {
+        self.compressed = false;
+        self
+    }
 }
 
 /// represents a parsed  debug info, that types can be found in
 pub struct DebugInfo {
-    types: HashMap<String,Type>,
+    types: HashMap<String, Type>,
     syms: HashMap<String, String>,
 }
 
 impl DebugInfo {
     /// get a symbol from the symbolcache
-    fn get_by_sym(&self, _symbol:  &str ) -> Option<Type> {
+    fn get_by_sym(&self, _symbol: &str) -> Option<Type> {
         unimplemented!();
     }
-    /// lookup via symbols in the file 
-    fn get_by_type(&self, _symbol:  &str ) -> Option<Type> {
+    /// lookup via symbols in the file
+    fn get_by_type(&self, _symbol: &str) -> Option<Type> {
         unimplemented!();
     }
 }
-
-
-
 
 // represents a symbol located in the debugging info. Symbols are
 // currently only namespaced by their module path, they dont contain
 // the full scope path. Each symbol has a type
-struct Symbol {
-}
+struct Symbol {}
 
 // represents the module path a symbol or type lives under.  symbols
 // can be located further in scope blocks, but for now, they only
 // support accessing via the module hierarchy
-struct ModulePath {
-}
+struct ModulePath {}
 
 // represents a data type of a symbol. The data type is always
 // monomorphized, because we are looking at compiled code, so types
-// cannot be generic. 
-struct Type {
-}
+// cannot be generic.
+struct Type {}
 
 #[cfg(test)]
 mod tests {
-//    use std::env;
-//    use crate::DebugInfo;
+    //    use std::env;
+    //    use crate::DebugInfo;
     #[test]
-    fn it_works() {
-
-
-    }
+    fn it_works() {}
 }
-
-
 
 // determining if a type implements Serialize:::
 // DWARF does not represent trait info, so we have to determine from functions in the trait implementation:
@@ -322,11 +321,10 @@ mod tests {
 // ends up being a different type in the debuginfo, so you cant link
 // them back together (no use just using unitoffset to connect them
 
-
 // parsing arrays
-// 
+//
 // starts as array type.
-// 
+//
 // the array type has a DW_AT_type attribute which
 // points to the type of the elment. (standard unit offset value)
 //
@@ -339,4 +337,3 @@ mod tests {
 //
 // The DW_TAG_subrange_type also contains a DW_AT_count,
 // which is the number of elements in the array
-
