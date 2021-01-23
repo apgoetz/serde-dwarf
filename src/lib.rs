@@ -14,7 +14,8 @@ use regex;
 use std::collections::{HashMap, HashSet};
 //use fallible_iterator::FallibleIterator;
 mod parser;
-
+mod typ;
+pub use typ::Type;
 #[derive(Debug)]
 enum ErrorCode {
     Io(io::Error),
@@ -256,6 +257,19 @@ impl DebugInfoBuilder {
         self.compressed = false;
         self
     }
+
+    fn allow_namespace(&self, ns: &str) -> bool{
+        let denylist = ["{{impl}}", "{{closure}}"];
+
+        // check to see if this namespace contains a forbidden namespace
+        for deny in denylist.iter() {
+            if ns.contains(deny) {
+                return false;
+            }
+        }
+        true
+    }
+    
 }
 
 /// represents a parsed  debug info, that types can be found in
@@ -285,10 +299,6 @@ struct Symbol {}
 // support accessing via the module hierarchy
 struct ModulePath {}
 
-// represents a data type of a symbol. The data type is always
-// monomorphized, because we are looking at compiled code, so types
-// cannot be generic.
-struct Type {}
 
 #[cfg(test)]
 mod tests {

@@ -14,6 +14,7 @@ gimli = "0.23.0"
 id-arena = "2.2.1"
 memmap = "0.7.0"
 object = "0.23.0"
+rayon = "1.5.0"
 regex = "1.4.3"
 rustc-demangle = "0.1.18"
 
@@ -26,6 +27,6 @@ codegen-units = 1
 debug = 2
 debug-assertions = false # <-
 incremental = false
-lto = 'thin' # fat lto currently breaks serde_dwarf
+lto = 'fat' 
 opt-level = 3 # <-
 overflow-checks = false # <-
