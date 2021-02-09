@@ -11,7 +11,7 @@ use gimli::{self};
 use memmap;
 use object;
 use regex;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, hash_map};
 //use fallible_iterator::FallibleIterator;
 mod parser;
 mod typ;
@@ -64,6 +64,15 @@ impl From<gimli::Error> for Error {
         })
     }
 }
+
+impl From<io::Error> for Error {
+    fn from(err: io::Error) -> Self {
+        Error(ErrorImpl {
+            code: ErrorCode::Io(err),
+        })
+    }
+}
+
 
 impl From<object::Error> for Error {
     fn from(err: object::Error) -> Self {
@@ -196,10 +205,12 @@ impl DebugInfoBuilder {
     /// specfiy a list of strings. symbols in debuginfo must match one of
     /// the listed strings in order to be extracted
     pub fn filter_sym_list<'a, I>(&'a mut self, i: I) -> &'a DebugInfoBuilder
-    where
-        I: Iterator<Item = String>,
+        where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+
     {
-        self.filter = Filter::SymbolList(i.collect());
+        self.filter = Filter::SymbolList(i.into_iter().map(|s| String::from(s.as_ref())).collect());
         self
     }
 
@@ -258,7 +269,7 @@ impl DebugInfoBuilder {
         self
     }
 
-    fn allow_namespace(&self, ns: &str) -> bool{
+    fn allow_namespace(&self, ns: &str) -> bool {
         let denylist = ["{{impl}}", "{{closure}}"];
 
         // check to see if this namespace contains a forbidden namespace
@@ -269,23 +280,74 @@ impl DebugInfoBuilder {
         }
         true
     }
-    
+}
+
+
+pub struct Iter<'a>(hash_map::Keys<'a, String, gimli::DebugInfoOffset>);
+
+impl Clone for Iter<'_> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Iter(self.0.clone())
+    }
+}
+
+impl fmt::Debug for Iter<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.clone()).finish()
+    }
+}
+
+impl<'a> Iterator for Iter<'a> {
+    type Item = &'a str;
+
+    #[inline]
+    fn next(&mut self) -> Option<&'a str> {
+        self.0.next().map(String::as_str)
+    }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+
+impl ExactSizeIterator for Iter<'_> {
+    #[inline]
+    fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 /// represents a parsed  debug info, that types can be found in
 pub struct DebugInfo {
-    types: HashMap<String, Type>,
-    syms: HashMap<String, String>,
+    types: HashMap<String, gimli::DebugInfoOffset>,
+    syms: HashMap<String, gimli::DebugInfoOffset>,
+    symtypes: HashMap<String, String>,
+    builder: typ::TypeBuilder<gimli::DebugInfoOffset>
 }
 
 impl DebugInfo {
     /// get a symbol from the symbolcache
-    fn get_by_sym(&self, _symbol: &str) -> Option<Type> {
-        unimplemented!();
+    pub fn get_by_sym(&self, symbol: &str) -> Option<Type> {
+        self.builder.build(*self.syms.get(symbol)?)
     }
     /// lookup via symbols in the file
-    fn get_by_type(&self, _symbol: &str) -> Option<Type> {
-        unimplemented!();
+    pub fn get_by_type(&self, symbol: &str) -> Option<Type> {
+        self.builder.build(*self.types.get(symbol)?)
+    }
+    /// get an iterator of the symbols we know
+    pub fn syms(&self) ->  Iter {
+        Iter(self.syms.keys())
+    }
+    
+    /// get an iterator of the symbols we know
+    pub fn symtype(&self, symbol: &str) ->  Option<String> {
+        self.symtypes.get(symbol).map(String::from)
+    }
+
+    /// get an iterator of the types we know
+    pub fn types(&self) ->  Iter {
+        Iter(self.types.keys())
     }
 }
 
@@ -298,7 +360,6 @@ struct Symbol {}
 // can be located further in scope blocks, but for now, they only
 // support accessing via the module hierarchy
 struct ModulePath {}
-
 
 #[cfg(test)]
 mod tests {

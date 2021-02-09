@@ -48,9 +48,10 @@ macro_rules! serialize {
 
 
 fn main() {
-    let mut serializer = serde_json::Serializer::new(io::stdout());
+    let mut serializer = serde_json::Serializer::new(io::sink());
 
     serialize!(serializer,
+               my_u8 => 1u8,
 	       my_foo => Foo{bar: 1, baz: "test"},
 	       my_array => [1,2,3],
 	       my_slice => &my_array[0..1],
@@ -72,5 +73,13 @@ fn main() {
     );
     
     let my_exe = env::current_exe().unwrap();
-    serde_dwarf::DebugInfoBuilder::new().parse_path(my_exe).unwrap();
+    let debuginfo = serde_dwarf::DebugInfoBuilder::new()
+        .filter_sym_list(&["my_u8"])
+        .parse_path(my_exe).unwrap();
+    println!("{:?}", debuginfo.types());
+    assert_eq!(type_name_of_val(&my_u8), debuginfo.symtype("my_u8").unwrap())
+}
+
+pub fn type_name_of_val<T: ?Sized>(_val: &T) -> &'static str {
+    std::any::type_name::<T>()
 }

@@ -1,9 +1,9 @@
-use std::collections::{BTreeMap,HashMap};
-use std::fmt;
 use std::cmp;
+use std::collections::{BTreeMap, HashMap, hash_map};
+use std::fmt;
 use std::hash;
 use std::ops::Index;
-
+use std::convert::TryFrom;
 // how to handle recursive types?  the type variable needs to be able
 // to serialize something if it is behind a vec, or a reference serde
 // gets around this by using traits, the recursive type can call its
@@ -19,15 +19,15 @@ use std::ops::Index;
 // have a back reference to the dictionary it was created from, since
 // types can be related to each other.
 //
-// 
+//
 // consider the classic case of serializing a linked list:
 //
 // struct List(Option<Box<List>>)
 //
 // in this case we need to refer back to the original type when we deserialize the type.
 //
-// solution: use type lookup graph  
-// 
+// solution: use type lookup graph
+//
 // what about circularly referenced data types:
 //
 // struct A(Option<Box<B>>)
@@ -35,60 +35,59 @@ use std::ops::Index;
 //
 // let foo = A(Some(Box::new(B(Some(Box::new(A(None)))))))
 
-
 type VariantIndex = u32;
-trait BuilderKey: fmt::Debug + Clone + Send + Sync + cmp::Eq + hash::Hash{}
+pub trait BuilderKey: fmt::Debug + Clone + Send + Sync + cmp::Eq + hash::Hash {}
 
-impl<'a, T> BuilderKey for T where
+impl<'a, T> BuilderKey for T
+where
     T: 'a + fmt::Debug + Clone + Send + Sync + cmp::Eq + hash::Hash,
     &'a T: hash::Hash,
 {
 }
 
-
-#[derive(Debug, Clone)]
-pub enum Variant<K:fmt::Debug+Clone> {
+#[derive(Debug, Clone, PartialEq)]
+pub enum Variant<K: fmt::Debug + Clone> {
     Unit(String),
     NewType(String, K),
     Tuple(String, Vec<K>),
-    Struct(String, BTreeMap<String,K>)
+    Struct(String, BTreeMap<String, K>),
 }
 
-impl<K,T> TypeDisplay<K,T> for Variant<K>
-    where
-    K:BuilderKey,
-    T:Index<K, Output = TypeVariant<K>>,
+impl<K, T> TypeDisplay<K, T> for Variant<K>
+where
+    K: BuilderKey,
+    T: Index<K, Output = TypeVariant<K>>,
 {
     fn tfmt(&self, f: &mut fmt::Formatter, t: &T) -> Result<(), fmt::Error> {
         match self {
             Variant::Unit(name) => write!(f, "{}", name),
             Variant::NewType(name, typ) => {
-                write!(f, "{}({})", name, print_name(typ,t))
-            },
-            Variant::Tuple(name,elems) => {
+                write!(f, "{}({})", name, print_name(typ, t))
+            }
+            Variant::Tuple(name, elems) => {
                 write!(f, "{}(", name)?;
                 let elems = elems
                     .iter()
-                    .map(|e|print_name(e,t))
+                    .map(|e| print_name(e, t))
                     .collect::<Vec<_>>()
                     .join(", ");
-                write!(f,"{})", elems)
-            },
+                write!(f, "{})", elems)
+            }
             Variant::Struct(name, fields) => {
                 write!(f, "{} {{ ", name)?;
                 let fields = fields
                     .iter()
-                    .map(|(k,v)|format!("{}: {}", k, print_name(v,t)))
+                    .map(|(k, v)| format!("{}: {}", k, print_name(v, t)))
                     .collect::<Vec<_>>()
                     .join(", ");
                 write!(f, "{} }},", fields)
-            },
+            }
         }
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum  PrimitiveType {
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum PrimitiveType {
     Bool,
     I8,
     I16,
@@ -106,6 +105,33 @@ pub enum  PrimitiveType {
     String,
     ByteArray,
     Unit,
+}
+
+impl TryFrom<&str> for PrimitiveType {
+    type Error = &'static str;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Ok(match value {
+            "bool" => PrimitiveType::Bool,
+            "i8" => PrimitiveType::I8, 
+            "i16" => PrimitiveType::I16,
+            "i32" => PrimitiveType::I32,
+            "i64" => PrimitiveType::I64,
+            "i128" => PrimitiveType::I128,
+            "u8" => PrimitiveType::U8,
+            "u16" => PrimitiveType::U16,
+            "u32" => PrimitiveType::U32,
+            "u64" => PrimitiveType::U64,
+            "u128" => PrimitiveType::U128,
+            "f32" => PrimitiveType::F32,
+            "f64" => PrimitiveType::F64,
+            "char" => PrimitiveType::Char,
+            "String" => PrimitiveType::String,
+            "[u8]" => PrimitiveType::ByteArray,
+            "()" => PrimitiveType::Unit,
+            _ => return Err("value is not a basetype")
+        })
+    }
 }
 
 impl fmt::Display for PrimitiveType {
@@ -132,33 +158,33 @@ impl fmt::Display for PrimitiveType {
     }
 }
 
-
 type TypeKey = usize;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Type {
     parts: Vec<TypeVariant<TypeKey>>,
     root: TypeKey,
 }
 
-
-impl<K,T> TypeDisplay<K,T> for K
-    where
-    K:BuilderKey,
-    T:Index<K, Output = TypeVariant<K>>,
+impl<K, T> TypeDisplay<K, T> for K
+where
+    K: BuilderKey,
+    T: Index<K, Output = TypeVariant<K>>,
 {
     fn tfmt(&self, f: &mut fmt::Formatter, t: &T) -> Result<(), fmt::Error> {
-        match t.index(self.clone()) {                    
-            TypeVariant::UnitStruct(name) => write!(f,"struct {}", name),
+        match t.index(self.clone()) {
+            TypeVariant::UnitStruct(name) => write!(f, "struct {}", name),
             TypeVariant::Enum(name, vars) => {
                 let vars = vars
                     .iter()
-                    .map(|v|v.type_to_string(t))
+                    .map(|v| v.type_to_string(t))
                     .collect::<Vec<_>>()
                     .join(", ");
                 write!(f, "enum {} {{ {} }}", name, vars)
-            },
-            TypeVariant::NewType(name, typ) => write!(f, "struct {}({})", name, typ.type_to_string(t)),
+            }
+            TypeVariant::NewType(name, typ) => {
+                write!(f, "struct {}({})", name, typ.type_to_string(t))
+            }
             TypeVariant::TupleStruct(name, types) => {
                 let types = types
                     .iter()
@@ -166,25 +192,27 @@ impl<K,T> TypeDisplay<K,T> for K
                     .collect::<Vec<_>>()
                     .join(", ");
                 write!(f, "struct {}({})", name, types)
-            },
+            }
             TypeVariant::Struct(name, fields) => {
                 let fields = fields
                     .iter()
-                    .map(|(k,v)| format!("{}: {}", k, print_name(v,t)))
+                    .map(|(k, v)| format!("{}: {}", k, print_name(v, t)))
                     .collect::<Vec<_>>()
                     .join(", ");
                 write!(f, "struct {} {{ {} }}", name, fields)
-            },
+            }
             _ => f.write_str(&print_name(self, t)),
         }
     }
 }
 
+
+
 // represents a data type of a symbol. The data type is always
 // monomorphized, because we are looking at compiled code, so types
 // cannot be generic.
-#[derive(Debug, Clone)]
-pub enum TypeVariant<K:fmt::Debug+Clone> {
+#[derive(Debug, Clone, PartialEq)]
+enum TypeVariant<K: fmt::Debug + Clone> {
     Primitive(PrimitiveType),
     Option(K),
     UnitStruct(String),
@@ -194,7 +222,7 @@ pub enum TypeVariant<K:fmt::Debug+Clone> {
     Tuple(Vec<K>),
     TupleStruct(String, Vec<K>),
     Map(K, K, Option<usize>),
-    Struct(String, BTreeMap<String,K>),
+    Struct(String, BTreeMap<String, K>),
 }
 
 impl fmt::Display for TypeVariant<String> {
@@ -203,245 +231,363 @@ impl fmt::Display for TypeVariant<String> {
     }
 }
 
+pub struct Iter<'a, K: 'a>(hash_map::Keys<'a, K, TypeVariant<K>>)
+    where
+    K: BuilderKey,
+    K: 'a;
 
-struct TypeBuilder<K:Clone+fmt::Debug> {
-    types: HashMap<K, TypeVariant<K>>
+
+impl<'a, K> Iterator for Iter<'a, K>
+    where
+    K: BuilderKey
+{
+    type Item = &'a K;
+
+    #[inline]
+    fn next(&mut self) -> Option<&'a K> {
+        self.0.next()
+    }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
 }
 
-impl<K:BuilderKey> TypeBuilder<K> {
-    fn new() -> Self {
-        TypeBuilder{types: HashMap::new()}
+
+
+
+pub struct TypeBuilder<K: Clone + fmt::Debug> {
+    types: HashMap<K, TypeVariant<K>>,
+}
+
+impl<K: BuilderKey> TypeBuilder<K> {
+    pub fn new() -> Self {
+        TypeBuilder {
+            types: HashMap::new(),
+        }
     }
 
-    fn convert_variant<'a>(&'a self,
-                           typ: &'a Variant<K>,
-                           partial_type: &mut Vec<TypeVariant<TypeKey>>,
-                           visited: &mut HashMap<&'a K, TypeKey>) -> Variant<TypeKey> {
-        match typ {
-            Variant::Unit(name) => Variant::Unit(String::from(name)),
-            Variant::NewType(name, k) => Variant::NewType(String::from(name), self.get_or_add(k,partial_type, visited)),
-            Variant::Tuple(name,keys) => {
-                let keys = keys.iter()
-                    .map(|k| self.get_or_add(k,partial_type, visited))
-                    .collect::<Vec<_>>();
-                Variant::Tuple(String::from(name),keys)
-            },
-            Variant::Struct(name, fields) => {
-                let fields = fields.iter()
-                    .map(|(f,k)| (f.clone(), self.get_or_add(k,partial_type, visited)))
-                    .collect::<BTreeMap<_,_>>();
-                Variant::Struct(String::from(name), fields)
-            },
-        }
+    pub fn iter(&self) -> Iter<K>{
+        Iter(self.types.keys())
     }
     
+    
+    // consume another type builder and add its types to ours
+    pub fn extend(&mut self, mut other:  TypeBuilder<K>) {
+        self.types.extend(other.types.drain());
+    }
+    
+    fn convert_variant<'a>(
+        &'a self,
+        typ: &'a Variant<K>,
+        partial_type: &mut Vec<TypeVariant<TypeKey>>,
+        visited: &mut HashMap<&'a K, TypeKey>,
+    ) -> Option<Variant<TypeKey>> {
+        let v = match typ {
+            Variant::Unit(name) => Variant::Unit(String::from(name)),
+            Variant::NewType(name, k) => {
+                let inner_id = self.get_or_add(k, partial_type, visited)?;
+                Variant::NewType(String::from(name), inner_id)
+            }
+            Variant::Tuple(name, keys) => {
+                let orig_len = keys.len();
+                let keys = keys
+                    .iter()
+                    .filter_map(|k| self.get_or_add(k, partial_type, visited))
+                    .collect::<Vec<_>>();
+                if orig_len != keys.len() {
+                    return None;
+                }
+                Variant::Tuple(String::from(name), keys)
+            }
+            Variant::Struct(name, fields) => {
+                let orig_len = fields.len();
+                let fields = fields
+                    .iter()
+                    .filter_map(|(f, k)| {
+                        if let Some(k) = self.get_or_add(k, partial_type, visited) {
+                            Some((f.clone(), k))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<BTreeMap<_, _>>();
+                if orig_len != fields.len() {
+                    return None;
+                }
+                Variant::Struct(String::from(name), fields)
+            }
+        };
+        Some(v)
+    }
+
     // gets the index of a type in the vec, or adds it if it doesnt exist
     // this is how we build types
-    fn get_or_add<'a>(&'a self,
-                      typ: &'a K,
-                      partial_type: &mut Vec<TypeVariant<TypeKey>>,
-                      visited: &mut HashMap<&'a K, TypeKey>) -> TypeKey {
-
+    fn get_or_add<'a>(
+        &'a self,
+        typ: &'a K,
+        partial_type: &mut Vec<TypeVariant<TypeKey>>,
+        visited: &mut HashMap<&'a K, TypeKey>,
+    ) -> Option<TypeKey> {
         // if we have already seen this data type, return its index
         if let Some(index) = visited.get(typ) {
-            return *index;
+            return Some(*index);
         }
-        // otherwise, we need to add it 
+        // otherwise, we need to add it
         // TODO, fix panic with error code
-        let variant = self.types.get(typ).unwrap();
-
+        let variant = self.types.get(typ)?;
 
         // we dont know if this is a recursive type, so we
         // need to insert this type before we reference the
-        // inner type. 
+        // inner type.
         let idx = partial_type.len();
-        visited.insert(typ,idx);
+        visited.insert(typ, idx);
         partial_type.push(TypeVariant::Primitive(PrimitiveType::Unit));
-        
+
         partial_type[idx] = match variant {
             // if we are a primitive, we just add ourselves
-            TypeVariant::Primitive(p) => {
-                TypeVariant::Primitive(*p)
-            },
+            TypeVariant::Primitive(p) => TypeVariant::Primitive(*p),
 
             // if we are an option, we need to make sure our
             // underlying type is added and then add the option type
             TypeVariant::Option(tref) => {
-                let inner_ref = self.get_or_add(&tref, partial_type, visited);
+                let inner_ref = self.get_or_add(&tref, partial_type, visited)?;
                 TypeVariant::Option(inner_ref)
-            },
-            TypeVariant::UnitStruct(name) => {
-                TypeVariant::UnitStruct(name.clone())
-            },
+            }
+            TypeVariant::UnitStruct(name) => TypeVariant::UnitStruct(name.clone()),
             TypeVariant::Enum(name, variants) => {
-                let variants = variants.iter().map(|v|self.convert_variant(v,partial_type, visited)).collect::<Vec<_>>();
+                let orig_len = variants.len();
+                let variants = variants
+                    .iter()
+                    .filter_map(|v| self.convert_variant(v, partial_type, visited))
+                    .collect::<Vec<_>>();
+                if orig_len != variants.len() {
+                    return None;
+                }
                 TypeVariant::Enum(String::from(name), variants)
             }
             TypeVariant::NewType(name, tref) => {
-                let inner_ref = self.get_or_add(&tref, partial_type, visited);
+                let inner_ref = self.get_or_add(&tref, partial_type, visited)?;
                 // update our type with the real variant
                 TypeVariant::NewType(String::from(name), inner_ref)
-            },
+            }
             TypeVariant::Seq(typ, len) => {
-                let inner_ref = self.get_or_add(&typ, partial_type, visited);
+                let inner_ref = self.get_or_add(&typ, partial_type, visited)?;
                 TypeVariant::Seq(inner_ref, *len)
-            },
+            }
             TypeVariant::Tuple(types) => {
-                let types = types.iter().map(|k| self.get_or_add(k, partial_type, visited)).collect::<Vec<_>>();
+                let orig_len = types.len();
+                let types = types
+                    .iter()
+                    .filter_map(|k| self.get_or_add(k, partial_type, visited))
+                    .collect::<Vec<_>>();
+                if orig_len != types.len() {
+                    return None;
+                }
                 TypeVariant::Tuple(types)
-            },
+            }
             TypeVariant::TupleStruct(name, types) => {
-                let types = types.iter().map(|k| self.get_or_add(k, partial_type, visited)).collect::<Vec<_>>();
+                let orig_len = types.len();
+                let types = types
+                    .iter()
+                    .filter_map(|k| self.get_or_add(k, partial_type, visited))
+                    .collect::<Vec<_>>();
+                if orig_len != types.len() {
+                    return None;
+                }
                 TypeVariant::TupleStruct(name.clone(), types)
-            },
+            }
             TypeVariant::Map(key, val, len) => {
-                let key = self.get_or_add(key, partial_type, visited);
-                let val = self.get_or_add(val, partial_type, visited);
+                let key = self.get_or_add(key, partial_type, visited)?;
+                let val = self.get_or_add(val, partial_type, visited)?;
                 TypeVariant::Map(key, val, *len)
-            },
-            TypeVariant::Struct(name,fields) => {
-                let fields = fields.iter().map(|(f,k)| (f.clone(), self.get_or_add(k, partial_type, visited))).collect::<BTreeMap<_,_>>();
-                TypeVariant::Struct(name.clone(),fields)
+            }
+            TypeVariant::Struct(name, fields) => {
+                let orig_len = fields.len();
+                let fields = fields
+                    .iter()
+                    .filter_map(|(f, k)| {
+                        if let Some(k) = self.get_or_add(k, partial_type, visited) {
+                            Some((f.clone(), k))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<BTreeMap<_, _>>();
+                if orig_len != fields.len() {
+                    return None;
+                }
+                TypeVariant::Struct(name.clone(), fields)
             }
         };
-        idx
+        Some(idx)
     }
+
+    
     
     // build a type from what is present here
-    fn build(&self, root: K) -> Option<Type> {
+    pub fn build(&self, root: K) -> Option<Type> {
         let mut parts = Vec::new();
         let mut visited = HashMap::new();
-        let root = self.get_or_add(&root, &mut parts, &mut visited);
-        Some(Type{parts, root})
+        let root = self.get_or_add(&root, &mut parts, &mut visited)?;
+        Some(Type { parts, root })
     }
-    
-    fn add_prim<'a>(&'a mut self, k: K, p: PrimitiveType) -> &'a TypeBuilder<K> {
+
+    pub fn add_prim<'a>(&'a mut self, k: K, p: PrimitiveType) -> &'a TypeBuilder<K> {        
         self.types.insert(k, TypeVariant::Primitive(p));
         self
     }
 
-    fn add_option<'a>(&'a mut self, k: K, t: K) -> &'a TypeBuilder<K> {
+    pub fn add_option<'a>(&'a mut self, k: K, t: K) -> &'a TypeBuilder<K> {
         self.types.insert(k, TypeVariant::Option(t));
         self
     }
-    
-    fn add_unit_struct<'a>(&'a mut self, k: K, name: &str) -> &'a TypeBuilder<K> {
-        self.types.insert(k, TypeVariant::UnitStruct(String::from(name)));
-        self
-    }    
 
-    fn add_enum<'a>(&'a mut self, k: K, name: &str, variants: &Vec<Variant<K>>) -> &'a TypeBuilder<K> {
-        self.types.insert(k, TypeVariant::Enum(String::from(name), variants.clone()));
+    pub fn add_unit_struct<'a>(&'a mut self, k: K, name: &str) -> &'a TypeBuilder<K> {
+        if ! self.types.contains_key(&k) {
+            self.types
+                .insert(k, TypeVariant::UnitStruct(String::from(name)));
+        }
         self
-    }    
+    }
 
-    fn add_newtype<'a>(&'a mut self, k: K, name: &str, t: K) -> &'a TypeBuilder<K> {
-        self.types.insert(k, TypeVariant::NewType(String::from(name), t));
+    pub fn add_enum<'a>(
+        &'a mut self,
+        k: K,
+        name: &str,
+        variants: &Vec<Variant<K>>,
+    ) -> &'a TypeBuilder<K> {
+        if ! self.types.contains_key(&k) {
+            self.types
+                .insert(k, TypeVariant::Enum(String::from(name), variants.clone()));
+        }
         self
-    }    
+    }
 
-    fn add_seq<'a>(&'a mut self, key: K, typ: K, len: Option<usize>) -> &'a TypeBuilder<K> {
+    pub fn add_newtype<'a>(&'a mut self, k: K, name: &str, t: K) -> &'a TypeBuilder<K> {
+        if ! self.types.contains_key(&k) {
+            self.types
+                .insert(k, TypeVariant::NewType(String::from(name), t));
+        }
+        self
+    }
+
+    pub fn add_seq<'a>(&'a mut self, key: K, typ: K, len: Option<usize>) -> &'a TypeBuilder<K> {
         self.types.insert(key, TypeVariant::Seq(typ, len));
         self
-    }        
+    }
 
-    fn add_tuple<'a>(&'a mut self, key: K, types: &[K]) -> &'a TypeBuilder<K> {
-        let types = Vec::from(types);
-        self.types.insert(key, TypeVariant::Tuple(types));
+    pub fn add_tuple<'a>(&'a mut self, key: K, types: &[K]) -> &'a TypeBuilder<K> {
+        if ! self.types.contains_key(&key) {
+            let types = Vec::from(types);
+            self.types.insert(key, TypeVariant::Tuple(types));
+        }
         self
-    }        
+    }
 
-    fn add_tuple_struct<'a>(&'a mut self, key: K, name: &str, types: &[K]) -> &'a TypeBuilder<K> {
-        let types = Vec::from(types);
-        self.types.insert(key, TypeVariant::TupleStruct(String::from(name), types));
+    pub fn add_tuple_struct<'a>(&'a mut self, key: K, name: &str, types: &[K]) -> &'a TypeBuilder<K> {
+        if ! self.types.contains_key(&key) {
+            let types = Vec::from(types);
+            self.types
+                .insert(key, TypeVariant::TupleStruct(String::from(name), types));
+        }
         self
-    }        
+    }
 
-    fn add_map<'a>(&'a mut self, key: K, k: K, v: K, len: Option<usize>) -> &'a TypeBuilder<K> {
+    pub fn add_map<'a>(&'a mut self, key: K, k: K, v: K, len: Option<usize>) -> &'a TypeBuilder<K> {
         self.types.insert(key, TypeVariant::Map(k, v, len));
         self
-    }        
+    }
 
-    fn add_struct<'a>(&'a mut self, key: K, name: &str, fields: &BTreeMap<String, K>) -> &'a TypeBuilder<K> {
-        self.types.insert(key, TypeVariant::Struct(String::from(name), fields.clone()));
+    pub fn add_struct<'a>(
+        &'a mut self,
+        key: K,
+        name: &str,
+        fields: &BTreeMap<String, K>,
+    ) -> &'a TypeBuilder<K> {
+        if ! self.types.contains_key(&key) {
+            self.types
+                .insert(key, TypeVariant::Struct(String::from(name), fields.clone()));
+        }
         self
-    }        
+    }
+
+    pub fn contains_key(&self, k: K) -> bool {
+        self.types.contains_key(&k)
+    }
     
-    
-    // escape hatch to add a raw type
+    // escape hatch to add a raw type. Do we need this???
     fn add_type<'a>(&'a mut self, k: K, t: TypeVariant<K>) -> &'a TypeBuilder<K> {
         self.types.insert(k, t);
         self
     }
 }
 
-
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.root.tfmt(f,&self.parts)
+        self.root.tfmt(f, &self.parts)
     }
 }
 
-
-
 // helper trait for various things to format themselves
-trait TypeDisplay<I, T:Index<I>> {
+trait TypeDisplay<I, T: Index<I>> {
     fn tfmt(&self, f: &mut fmt::Formatter<'_>, t: &T) -> fmt::Result;
-
 
     // this hack taken from https://github.com/rust-lang/rust/issues/46591#issue-280605901
     fn type_to_string(&self, t: &T) -> String
-	where Self: Sized
+    where
+        Self: Sized,
     {
-    let fmt = {
-        struct ManualDisplay<'a,I, T:Index<I>>(&'a dyn TypeDisplay<I,T>, &'a T);
+        let fmt = {
+            struct ManualDisplay<'a, I, T: Index<I>>(&'a dyn TypeDisplay<I, T>, &'a T);
 
-        impl<'a,I, T:Index<I>> fmt::Display for ManualDisplay<'a,I,T> {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                self.0.tfmt(f, self.1)
+            impl<'a, I, T: Index<I>> fmt::Display for ManualDisplay<'a, I, T> {
+                fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                    self.0.tfmt(f, self.1)
+                }
             }
-        }
 
-        ManualDisplay(self, t)
-    };
-	format!("{}", fmt)
+            ManualDisplay(self, t)
+        };
+        format!("{}", fmt)
     }
-
 }
 
 // just print the name of the type
-fn print_name<K,T>(key: &K, t: &T) -> String
-    where
+fn print_name<K, T>(key: &K, t: &T) -> String
+where
     K: BuilderKey,
-    T: Index<K,Output = TypeVariant<K>>
+    T: Index<K, Output = TypeVariant<K>>,
 {
     match t.index(key.clone()) {
         TypeVariant::Primitive(p) => p.to_string(),
-        TypeVariant::Option(opt) => format!("Option<{}>", print_name(opt,t)),
+        TypeVariant::Option(opt) => format!("Option<{}>", print_name(opt, t)),
         TypeVariant::UnitStruct(name) => name.to_string(),
         TypeVariant::Enum(name, _) => name.to_string(),
         TypeVariant::NewType(name, _) => name.to_string(),
-        TypeVariant::Seq(typ, len) => format!("[ {} ; {} ]",
-                                              print_name(typ, t),
-                                              len.map_or("?".to_string(), |l|l.to_string())),
+        TypeVariant::Seq(typ, len) => format!(
+            "[ {} ; {} ]",
+            print_name(typ, t),
+            len.map_or("?".to_string(), |l| l.to_string())
+        ),
         TypeVariant::Tuple(types) => {
             let types = types
                 .iter()
-                .map(|subtype| print_name(subtype,t))
+                .map(|subtype| print_name(subtype, t))
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("({})", types)
-        },
+        }
         TypeVariant::TupleStruct(name, _) => name.to_string(),
-        TypeVariant::Map(key,val,len) => format!("{{ {}: {} ; {} }}",
-                                                 print_name(key,t),
-                                                 print_name(val,t),
-                                                 len.map_or("?".to_string(), |l|l.to_string())),
-        TypeVariant::Struct(name, _) => name.to_string(),                    
+        TypeVariant::Map(key, val, len) => format!(
+            "{{ {}: {} ; {} }}",
+            print_name(key, t),
+            print_name(val, t),
+            len.map_or("?".to_string(), |l| l.to_string())
+        ),
+        TypeVariant::Struct(name, _) => name.to_string(),
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -465,7 +611,6 @@ mod tests {
 
     #[test]
     fn basic_types() {
-
         let mut builder = TypeBuilder::new();
         builder.add_prim("unit", PrimitiveType::Unit);
         builder.add_prim("u8", PrimitiveType::U8);
@@ -475,9 +620,10 @@ mod tests {
         builder.add_option("option_foo", "unit_struct");
 
         let tuple_var = Variant::Tuple("Baz".to_string(), vec!["unit", "unit_struct"]);
-        let enum_variants = vec![Variant::Unit("Foo".to_string()),
-                                 Variant::NewType("Bar".to_string(), "u8"),
-                                 tuple_var
+        let enum_variants = vec![
+            Variant::Unit("Foo".to_string()),
+            Variant::NewType("Bar".to_string(), "u8"),
+            tuple_var,
         ];
         builder.add_enum("enum", "MyEnum", &enum_variants);
 
@@ -496,7 +642,7 @@ mod tests {
         fields.insert(String::from("id"), "u8");
         fields.insert(String::from("vals"), "seq?");
         builder.add_struct("struct", "MyStruct", &fields);
-        
+
         // unit struct
         assert_fmt!(builder,
                     "unit_struct" => "struct Foo",
@@ -514,7 +660,7 @@ mod tests {
                     "struct" => "struct MyStruct { id: u8, vals: [ Foo ; ? ] }"
         );
     }
-    
+
     #[test]
     fn recursive_newtype() {
         // build a recursive type like struct Foo(Option<Box<Foo>>);
@@ -534,7 +680,7 @@ mod tests {
         builder.add_newtype("b", "B", "opta");
         builder.add_option("opta", "a");
         builder.add_option("optb", "b");
-        
+
         assert_fmt!(builder, "a" => "struct A(Option<B>)");
     }
 
@@ -543,5 +689,5 @@ mod tests {
         let mut builder = TypeBuilder::new();
         builder.add_option("opta", "a");
         assert!(builder.build("a").is_none());
-    }    
+    }
 }
