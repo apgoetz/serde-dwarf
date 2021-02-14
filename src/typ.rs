@@ -4,6 +4,10 @@ use std::fmt;
 use std::hash;
 use std::ops::Index;
 use std::convert::TryFrom;
+
+use serde;
+use serde::de::{DeserializeSeed, Deserializer};
+
 // how to handle recursive types?  the type variable needs to be able
 // to serialize something if it is behind a vec, or a reference serde
 // gets around this by using traits, the recursive type can call its
@@ -165,6 +169,24 @@ pub struct Type {
     parts: Vec<TypeVariant<TypeKey>>,
     root: TypeKey,
 }
+
+impl<'de> DeserializeSeed<'de> for Type
+{
+    // The return type of the `deserialize` method. This implementation
+    // appends onto an existing vector but does not create any new data
+    // structure, so the return type is ().
+    type Value = ();
+
+    fn deserialize<D>(self, _deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        todo!();
+    }
+}
+
+
+
 
 impl<K, T> TypeDisplay<K, T> for K
 where

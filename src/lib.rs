@@ -104,7 +104,7 @@ impl fmt::Debug for Error {
 }
 
 // represents any valid value that could be deserialized based on dwarf data
-// simliar to serde_json::Value, or rmpv::Value.
+// similar to serde_json::Value, or rmpv::Value.
 enum Value {}
 
 // wraps a non-self describing deserializer and and implements deserialize_any, using the type information to drive the underlying deserializer
@@ -182,10 +182,11 @@ impl DebugInfoBuilder {
     /// of the listed strings in order to be extracted. Type must also
     /// implement serde::Serialize
     pub fn filter_type_list<'a, I>(&'a mut self, i: I) -> &'a DebugInfoBuilder
-    where
-        I: Iterator<Item = String>,
+        where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
     {
-        self.filter = Filter::TypeList(i.collect());
+        self.filter = Filter::TypeList(i.into_iter().map(|s| String::from(s.as_ref())).collect());
         self
     }
 

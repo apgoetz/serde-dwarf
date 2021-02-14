@@ -99,6 +99,7 @@ impl<'i> DebugInfoParser<'i> {
             .filter_map(|o| results.subfunction_to_self(*o))
             .collect::<HashSet<_>>();
 
+
         
         let mut builder = typ::TypeBuilder::new();
         results
@@ -115,6 +116,12 @@ impl<'i> DebugInfoParser<'i> {
             .iter()
             .filter_map(|o| results.get_typename(*o).map(|n|(n, *o)))
             .collect::<HashMap<String,gimli::DebugInfoOffset>>();
+
+        // results.serialize_types.iter().for_each(|o| {
+        //     let (unit, u_offset) = results.di_to_unit(*o).unwrap();
+        //     let entry = unit.entry(u_offset).unwrap();
+        //     self.dump_die(0, &entry).unwrap();
+        // });
 
         let syms = results
             .symbol_types
@@ -198,6 +205,7 @@ impl<'i> DebugInfoParser<'i> {
             _ => false,
         }
     }
+
 }
 
 #[derive(Debug)]
@@ -551,7 +559,7 @@ impl<'i> UnitResults<'i> {
                     },
                     _ => {
                         if let Ok(Some(name)) = name {
-                            println!("unknown type: {}", name);
+                            eprintln!("unknown type: {}", name);
                         }
                         None
                     }
