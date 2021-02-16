@@ -6,15 +6,15 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::Path;
-//use std::ops::Deref;
 use gimli::{self};
 use memmap;
 use object;
 use regex;
 use std::collections::{HashMap, HashSet, hash_map};
-//use fallible_iterator::FallibleIterator;
+
 mod parser;
 mod typ;
+mod de;
 pub use typ::Type;
 #[derive(Debug)]
 enum ErrorCode {
@@ -40,7 +40,7 @@ struct ErrorImpl {
     code: ErrorCode,
 }
 
-// error type for this crate
+/// error type for this crate
 pub struct Error(ErrorImpl);
 
 impl Error {
@@ -103,9 +103,27 @@ impl fmt::Debug for Error {
     }
 }
 
-// represents any valid value that could be deserialized based on dwarf data
-// similar to serde_json::Value, or rmpv::Value.
-enum Value {}
+/// represents any valid value that could be deserialized based on dwarf data
+/// similar to serde_json::Value, or rmpv::Value.
+pub enum Value {
+    Bool(bool),
+    U8(u8),
+    U16(u16),
+    U32(u32),
+    U64(u64),
+    U128(u128),
+    I8(i8),
+    I16(i16),
+    I32(i32),
+    I64(i64),
+    I128(i128),
+    F32(f32),
+    F64(f64),
+    Char(char),
+    String(String),
+    ByteArray(Box<[u8]>),
+    Unit,
+}
 
 // wraps a non-self describing deserializer and and implements deserialize_any, using the type information to drive the underlying deserializer
 //
@@ -128,6 +146,7 @@ impl fmt::Display for BuilderError {
     }
 }
 
+/// Builder type to set options for parser dwarf info
 pub struct DebugInfoBuilder {
     // should type signatures be tokenized, or left as strings
     store_tokens: bool,
@@ -283,7 +302,7 @@ impl DebugInfoBuilder {
     }
 }
 
-
+/// helper struct to allow iteration over types in a DebugInfo struct 
 pub struct Iter<'a>(hash_map::Keys<'a, String, gimli::DebugInfoOffset>);
 
 impl Clone for Iter<'_> {

@@ -117,11 +117,6 @@ impl<'i> DebugInfoParser<'i> {
             .filter_map(|o| results.get_typename(*o).map(|n|(n, *o)))
             .collect::<HashMap<String,gimli::DebugInfoOffset>>();
 
-        // results.serialize_types.iter().for_each(|o| {
-        //     let (unit, u_offset) = results.di_to_unit(*o).unwrap();
-        //     let entry = unit.entry(u_offset).unwrap();
-        //     self.dump_die(0, &entry).unwrap();
-        // });
 
         let syms = results
             .symbol_types
@@ -416,11 +411,16 @@ impl<'i> UnitResults<'i> {
                 let prim = typ::PrimitiveType::try_from(name.ok()??).ok()?;
                 builder.add_prim(offset, prim);
             }
-            _ => {
-                // eprintln!("Cannot add type:");
-                // self.di_parser.dump_die(0, &entry).ok()?;
-                return None;
+            constants::DW_TAG_structure_type => {
+                // right now, we only handle the rest of the primitive types
+                match name.ok()?? {
+                    "String" => {builder.add_prim(offset, typ::PrimitiveType::String);}
+                    "&str" => {builder.add_prim(offset, typ::PrimitiveType::String);}
+                    "&[u8]" => {builder.add_prim(offset, typ::PrimitiveType::ByteArray);}
+                    _ => {return None;}
+                }
             },
+            _ => {return None;}
         }
         Some(())
     }

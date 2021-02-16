@@ -5,9 +5,6 @@ use std::hash;
 use std::ops::Index;
 use std::convert::TryFrom;
 
-use serde;
-use serde::de::{DeserializeSeed, Deserializer};
-
 // how to handle recursive types?  the type variable needs to be able
 // to serialize something if it is behind a vec, or a reference serde
 // gets around this by using traits, the recursive type can call its
@@ -121,16 +118,17 @@ impl TryFrom<&str> for PrimitiveType {
             "i16" => PrimitiveType::I16,
             "i32" => PrimitiveType::I32,
             "i64" => PrimitiveType::I64,
+            "isize" => PrimitiveType::I64,
             "i128" => PrimitiveType::I128,
             "u8" => PrimitiveType::U8,
             "u16" => PrimitiveType::U16,
             "u32" => PrimitiveType::U32,
             "u64" => PrimitiveType::U64,
+            "usize" => PrimitiveType::U64,
             "u128" => PrimitiveType::U128,
             "f32" => PrimitiveType::F32,
             "f64" => PrimitiveType::F64,
             "char" => PrimitiveType::Char,
-            "String" => PrimitiveType::String,
             "[u8]" => PrimitiveType::ByteArray,
             "()" => PrimitiveType::Unit,
             _ => return Err("value is not a basetype")
@@ -162,27 +160,13 @@ impl fmt::Display for PrimitiveType {
     }
 }
 
-type TypeKey = usize;
+pub type TypeKey = usize;
 
+/// Represents a data type described in the debug info
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type {
-    parts: Vec<TypeVariant<TypeKey>>,
-    root: TypeKey,
-}
-
-impl<'de> DeserializeSeed<'de> for Type
-{
-    // The return type of the `deserialize` method. This implementation
-    // appends onto an existing vector but does not create any new data
-    // structure, so the return type is ().
-    type Value = ();
-
-    fn deserialize<D>(self, _deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        todo!();
-    }
+    pub(crate) parts: Vec<TypeVariant<TypeKey>>,
+    pub(crate) root: TypeKey,
 }
 
 
@@ -234,7 +218,7 @@ where
 // monomorphized, because we are looking at compiled code, so types
 // cannot be generic.
 #[derive(Debug, Clone, PartialEq)]
-enum TypeVariant<K: fmt::Debug + Clone> {
+pub enum TypeVariant<K: fmt::Debug + Clone> {
     Primitive(PrimitiveType),
     Option(K),
     UnitStruct(String),
