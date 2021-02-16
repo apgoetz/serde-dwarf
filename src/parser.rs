@@ -82,7 +82,7 @@ impl<'i> DebugInfoParser<'i> {
 
         let process_unit = |unit: &'i gimli::Unit<Reader<'i>>| {
             let mut unitparser = UnitParser::new(self, unit);
-            if let Ok(_) = unitparser.parse() {
+            if unitparser.parse().is_ok() {
                 results.lock().unwrap().add_unit(unitparser);
             }
         };
@@ -140,7 +140,7 @@ impl<'i> DebugInfoParser<'i> {
         depth: usize,
         entry: &gimli::DebuggingInformationEntry<Reader>,
     ) -> result::Result<(), gimli::Error> {
-        let padding = "  ".repeat(2 * depth + 1 as usize);
+        let padding = "  ".repeat(2 * depth + 1 );
         let tag_padding = "  ".repeat(2 * depth as usize);
         eprintln!(
             "{}<{}>{}",
@@ -484,7 +484,7 @@ impl<'i> UnitResults<'i> {
             // we found a unit, now lets convert the info offset
             // into a local offset. This should always succeed.
             if let Some(offset) = offset.to_unit_offset(&unit.header) {
-                return Some((unit, offset));
+                Some((unit, offset))
             } else {
                 None
             }
@@ -503,7 +503,7 @@ impl<'i> UnitResults<'i> {
 
     fn get_typename(&self, offset: gimli::DebugInfoOffset) -> Option<String> {
         if let Some((name, namespace)) = self.get_fullname(offset) {
-            if namespace.len() > 0 {
+            if !namespace.is_empty() {
                 Some(format!("{}::{}", namespace, name))
             } else {
                 Some(name)
@@ -551,7 +551,7 @@ impl<'i> UnitResults<'i> {
                         let (name,namespace) = self.get_fullname(subtype)?;
                         let len = get_array_length(unit, u_offset)?;
 
-                        if namespace.len() > 0 {
+                        if !namespace.is_empty() {
                             Some((format!("[{}::{}; {}]", namespace, name, len), String::new()))
                         } else {
                             Some((format!("[{}; {}]", name, len), String::new()))
@@ -639,9 +639,8 @@ fn get_array_length(unit: &gimli::Unit<Reader>, offset: UnitOffset) -> Option<u6
     // build a cursor pointing at the array type
     let mut cursor = unit.entries_at_offset(offset).ok()?;
     // move cursor to this element
-    if cursor.next_dfs().ok()?.is_none() {
-        return None;
-    }
+    cursor.next_dfs().ok()??;
+
     // move cursor to child, describing the array
     if let Some((delta_depth, entry)) = cursor.next_dfs().ok()? {
         // if we did not move directly to our own child:

@@ -7,9 +7,6 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use gimli::{self};
-use memmap;
-use object;
-use regex;
 use std::collections::{HashMap, HashSet, hash_map};
 
 mod parser;
