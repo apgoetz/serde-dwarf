@@ -5,36 +5,6 @@ use std::hash;
 use std::ops::Index;
 use std::convert::TryFrom;
 
-// how to handle recursive types?  the type variable needs to be able
-// to serialize something if it is behind a vec, or a reference serde
-// gets around this by using traits, the recursive type can call its
-// own serialize impl if it find a reference to it in the type
-// definition.
-//
-// We cant do that with the current implementation because it uses
-// concrete structs.
-//
-// one solution would be to use some kind of type lookup. Have a field
-// of a type be considered a "reference" and then looking up the type
-// in a centralized "dictionary" of types. This requires the type to
-// have a back reference to the dictionary it was created from, since
-// types can be related to each other.
-//
-//
-// consider the classic case of serializing a linked list:
-//
-// struct List(Option<Box<List>>)
-//
-// in this case we need to refer back to the original type when we deserialize the type.
-//
-// solution: use type lookup graph
-//
-// what about circularly referenced data types:
-//
-// struct A(Option<Box<B>>)
-// struct B(Option<Box<A>>)
-//
-// let foo = A(Some(Box::new(B(Some(Box::new(A(None)))))))
 
 type VariantIndex = u32;
 pub trait BuilderKey: fmt::Debug + Clone + Send + Sync + cmp::Eq + hash::Hash {}
@@ -169,7 +139,27 @@ pub struct Type {
     pub(crate) root: TypeKey,
 }
 
+// Represents a type object that is completely contained in another
+// Type object. because of this, we can reference its type cache (the
+// parts field) instead of cloning it
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SubType<'a> {
+    pub(crate) parts: &'a Vec<TypeVariant<TypeKey>>,
+    pub(crate) root: TypeKey,
+}
 
+impl<'a> SubType<'a> {
+    pub fn new(typ: &'a Type) -> Self
+    {
+	SubType{parts: &typ.parts, root: typ.root}
+    }
+
+    pub fn new_key(&self, k: TypeKey) -> Self
+    {
+	assert!(k < self.parts.len());
+	SubType{parts: self.parts, root: k}
+    }
+}
 
 
 impl<K, T> TypeDisplay<K, T> for K

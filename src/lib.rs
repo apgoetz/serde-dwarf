@@ -1,4 +1,90 @@
 #![allow(dead_code)]
+//! # Introduction
+//! Deserialize [serde](https://serde.rs) data types without implementing
+//! `serde::Deserialize`
+//! 
+//! `serde_dwarf` provides wrappers to implement `deserialize_any` for
+//! non-self descriptive data types.
+//! 
+//! This means you can deserialize values without actually having to know
+//! their concrete type.
+//! 
+//! The `Value` types constructed by `serde_dwarf` can then be inspected
+//! or re-serialized in any arbitrary serde data format, and can be
+//! re-deserialized into the rust data type.
+//! 
+//! Possible use cases:
+//! 
+//! + jq for bincode
+//! + [serde_transcode](https://docs.rs/serde_transcode) for non-self describing data types
+//! + deserializer for embedded users of `serde`
+//! 
+//! # How It Works
+//! 
+//! `serde_dwarf` works by parsing the DWARF debuginfo that is generated
+//! for any `serde` using code. This provides enough information to
+//! reconstruct the `#[derive(Serialize)]` impls, assuming that the code
+//! isn't using too many of the serde attribute decorators. Once
+//! `serde_dwarf` knows about the type definition, you can now deserialize
+//! it into a generic `Value` enum.
+//! 
+//! Note that you don't actually need to tell serde_dwarf about the
+//! `Serialize` impls at compile time, all of the parsing is done
+//! dynamically. This allows for the creation of `serde` inspection tools
+//! that are crate-agnostic.
+//! 
+//! # Caveats and Soundness
+//! 
+//! `serde_dwarf` works be reconstructing the `Serialize` impl that
+//! `serde` would have created for a data type. This means that it cannot
+//! work on data types that define their own custom deserialization code,
+//! for example [uuid](https://docs.rs/uuid). In addition, if your code
+//! makes use of `serde` optional attributes to customize the
+//! serialization, for
+//! example [skip](https://serde.rs/field-attrs.html#skip), the
+//! deserialization will not be correct.
+//! 
+//! This also means that `serde_dwarf` contains a potentially buggy
+//! reimplementation of the serialize and deserialize derive macros, that
+//! could potentially get out of date as serde is updated. We try to stay
+//! on top of this by testing that `serde_dwarf` drives the
+//! Deserialization Visitors in exactly the same way as `serde` itself,
+//! but there is some duplication of effort here.
+//! 
+//! This means that if you specify the wrong data type for the conversion,
+//! or if the `Deserialize` impl has a custom implementation, you will
+//! get garbage data, and `serde_dwarf` may or may not report an error. 
+//! 
+//! Taken together, this means that `serde_dwarf` really isn't suited for
+//! use in a production environment, but instead for tools for inspecting
+//! and manipulating `serde` serialized data. Think of it more like gdb's
+//! rust parser.
+//! 
+//! # Example
+//! 
+//! ```rust
+//! use serde_dwarf::DebugInfoBuilder; 
+//! use serde::de::DeserializeSeed; 
+//! use bincode::Options;
+//! 
+//! // an instance we want to serialize 
+//! let target = ("abc", 1, 2, 3);
+//! 
+//! // serialize it to bytes using bincode 
+//! let encoded: Vec<u8> = bincode::serialize(&target).unwrap();
+//! 
+//! // read out the types defined in the debug info of this executable 
+//! let di = DebugInfoBuilder::new().parse_path(std::env::current_exe().unwrap()).unwrap();
+//! let typ = di.typ("(&str, i32, i32, i32)").unwrap();
+//! 
+//! // build a bincode deserializer 
+//! let opts = bincode::DefaultOptions::new().with_fixint_encoding(); 
+//! let mut deserializer = bincode::Deserializer::from_slice(&encoded, opts);
+//! 
+//! // we can now deserialize the bytes into a Value struct.
+//! // note that we aren't actually using the type of target above
+//! println!("{:?}",typ.deserialize(&mut deserializer).unwrap());
+//! ```
 
 use core::result;
 use std::error;
@@ -10,6 +96,7 @@ use gimli::{self};
 use std::collections::{HashMap, HashSet, hash_map};
 
 mod parser;
+mod entry_parser;
 mod typ;
 mod de;
 pub use typ::Type;
@@ -102,6 +189,7 @@ impl fmt::Debug for Error {
 
 /// represents any valid value that could be deserialized based on dwarf data
 /// similar to serde_json::Value, or rmpv::Value.
+#[derive(Debug)]
 pub enum Value {
     Bool(bool),
     U8(u8),
@@ -120,6 +208,7 @@ pub enum Value {
     String(String),
     ByteArray(Box<[u8]>),
     Unit,
+    Tuple(Vec<Value>)
 }
 
 // wraps a non-self describing deserializer and and implements deserialize_any, using the type information to drive the underlying deserializer
@@ -345,11 +434,11 @@ pub struct DebugInfo {
 
 impl DebugInfo {
     /// get a symbol from the symbolcache
-    pub fn get_by_sym(&self, symbol: &str) -> Option<Type> {
+    pub fn sym(&self, symbol: &str) -> Option<Type> {
         self.builder.build(*self.syms.get(symbol)?)
     }
     /// lookup via symbols in the file
-    pub fn get_by_type(&self, symbol: &str) -> Option<Type> {
+    pub fn typ(&self, symbol: &str) -> Option<Type> {
         self.builder.build(*self.types.get(symbol)?)
     }
     /// get an iterator of the symbols we know
@@ -386,42 +475,3 @@ mod tests {
     fn it_works() {}
 }
 
-// determining if a type implements Serialize:::
-// DWARF does not represent trait info, so we have to determine from functions in the trait implementation:
-// look for DW_TAG_subprogram DIEs
-// they will have two attributes we can use, but they need to be demangled
-//
-// DW_AT_linkage_name describes the function as part of the trait:
-//
-// DW_AT_linkage_name          serde::ser::impls::<impl serde::ser::Serialize for &T>::serialize
-//
-//
-// DW_AT_name is the monomorphized function name, it will include the serializer:
-//
-// DW_AT_name                  serialize<(i32, i32, i32),&mut serde_json::ser::Serializer<std::io::stdio::Stdout, serde_json::ser::CompactFormatter>>
-//
-// You can determine the function implements serialize if it starts with: serde::ser::impls<impl serde::ser::Serialize for ???>
-//
-// the type that the function serializes should be the first type parameter of DW_AT_name
-//
-// You can also use the first parameter of the function (self) but
-// keep in mind this takes a pointer to the conrete data type, which
-// ends up being a different type in the debuginfo, so you cant link
-// them back together (no use just using unitoffset to connect them
-
-// parsing arrays
-//
-// starts as array type.
-//
-// the array type has a DW_AT_type attribute which
-// points to the type of the elment. (standard unit offset value)
-//
-// there is also a nested DIE record with a tag of
-// DW_TAG_subrange_type.
-//
-// This type contains a DW_AT_type with a pointer
-// to the type of the index variable, which seems
-// to be hardcoded as __ARRAY_SIZE_TYPE__
-//
-// The DW_TAG_subrange_type also contains a DW_AT_count,
-// which is the number of elements in the array

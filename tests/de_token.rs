@@ -44,7 +44,7 @@ macro_rules! assert_deserialize {
             <$typ as Deserialize>::deserialize(MockDeserializer::new(&mut serde_result, $magic)).unwrap();
 
         let mut dwarf_result = Vec::new();
-        let typ = DEBUGINFO.get_by_sym(TYPE_STR).expect(format!("could not build Type for symbol: {} type is {}", TYPE_STR, DEBUGINFO.symtype(TYPE_STR).unwrap()).as_str());
+        let typ = DEBUGINFO.sym(TYPE_STR).expect(format!("could not build Type for symbol: {} type is {}", TYPE_STR, DEBUGINFO.symtype(TYPE_STR).unwrap()).as_str());
             typ.deserialize(MockDeserializer::new(&mut dwarf_result, $magic)).unwrap();
 	}
     };
@@ -79,5 +79,17 @@ fn test_prims() {
     assert_deserialize!(test_str, &str);
     assert_deserialize!(test_u8_slice, &[u8]);
 
-    
 }
+
+#[test]
+fn test_tuple() {
+    assert_deserialize!(test_2_tuple, (u8,u16));
+}
+
+
+#[test]
+fn test_option() {
+    assert_deserialize!(test_option_none, Option<u8>);
+    assert_deserialize!(test_option_some, Option<u8>, 1);
+}
+
