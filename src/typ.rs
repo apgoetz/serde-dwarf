@@ -1,10 +1,10 @@
 use std::cmp;
-use std::collections::{BTreeMap, HashMap, hash_map};
+use std::collections::{HashMap, hash_map};
 use std::fmt;
 use std::hash;
 use std::ops::Index;
 use std::convert::TryFrom;
-
+use indexmap::IndexMap;
 
 type VariantIndex = u32;
 pub trait BuilderKey: fmt::Debug + Clone + Send + Sync + cmp::Eq + hash::Hash {}
@@ -21,7 +21,7 @@ pub enum Variant<K: fmt::Debug + Clone> {
     Unit(String),
     NewType(String, K),
     Tuple(String, Vec<K>),
-    Struct(String, BTreeMap<String, K>),
+    Struct(String, IndexMap<String, K>),
 }
 
 impl<K, T> TypeDisplay<K, T> for Variant<K>
@@ -159,6 +159,14 @@ impl<'a> SubType<'a> {
 	assert!(k < self.parts.len());
 	SubType{parts: self.parts, root: k}
     }
+
+    pub fn name(&self) -> String {
+        print_name(&self.root, self.parts)
+    }
+
+    pub fn variant(&self) -> &'a TypeVariant<TypeKey> {
+        &self.parts[self.root]
+    }
 }
 
 
@@ -218,7 +226,8 @@ pub enum TypeVariant<K: fmt::Debug + Clone> {
     Tuple(Vec<K>),
     TupleStruct(String, Vec<K>),
     Map(K, K, Option<usize>),
-    Struct(String, BTreeMap<String, K>),
+    // TODO: replace btreemap with order-preserving ADT
+    Struct(String, IndexMap<String, K>),
 }
 
 impl fmt::Display for TypeVariant<String> {
@@ -307,7 +316,7 @@ impl<K: BuilderKey> TypeBuilder<K> {
                             None
                         }
                     })
-                    .collect::<BTreeMap<_, _>>();
+                    .collect::<IndexMap<_, _>>();
                 if orig_len != fields.len() {
                     return None;
                 }
@@ -409,7 +418,7 @@ impl<K: BuilderKey> TypeBuilder<K> {
                             None
                         }
                     })
-                    .collect::<BTreeMap<_, _>>();
+                    .collect::<IndexMap<_, _>>();
                 if orig_len != fields.len() {
                     return None;
                 }
@@ -499,7 +508,7 @@ impl<K: BuilderKey> TypeBuilder<K> {
         &'a mut self,
         key: K,
         name: &str,
-        fields: &BTreeMap<String, K>,
+        fields: &IndexMap<String, K>,
     ) -> &'a TypeBuilder<K> {
         if ! self.types.contains_key(&key) {
             self.types
@@ -634,7 +643,7 @@ mod tests {
         builder.add_map("map2", "u8", "enum", Some(2));
         builder.add_map("map?", "u8", "enum", None);
 
-        let mut fields = BTreeMap::new();
+        let mut fields = IndexMap::new();
         fields.insert(String::from("id"), "u8");
         fields.insert(String::from("vals"), "seq?");
         builder.add_struct("struct", "MyStruct", &fields);

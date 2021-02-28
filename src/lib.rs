@@ -62,7 +62,10 @@
 //! 
 //! # Example
 //! 
-//! ```rust
+//! ```no_run
+//! #
+//! # //for some reason, this doesnt work when run in the rustdoc environment
+//! #
 //! use serde_dwarf::DebugInfoBuilder; 
 //! use serde::de::DeserializeSeed; 
 //! use bincode::Options;
@@ -208,7 +211,20 @@ pub enum Value {
     String(String),
     ByteArray(Box<[u8]>),
     Unit,
-    Tuple(Vec<Value>)
+    Tuple(Vec<Value>),
+    Option(Option<Box<Value>>),
+    UnitStruct(String),
+    NewType(String, Box<Value>),
+    TupleStruct(String, Vec<Value>),
+    Struct(String, Vec<(String, Value)>),
+    Enum(String, Variant)
+}
+#[derive(Debug)]
+pub enum Variant {
+    UnitVariant(String),
+    NewTypeVariant(String, Box<Value>),
+    TupleVariant(String, Vec<Value>),
+    StructVariant(String, Vec<(String, Value)>),
 }
 
 // wraps a non-self describing deserializer and and implements deserialize_any, using the type information to drive the underlying deserializer

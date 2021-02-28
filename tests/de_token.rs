@@ -82,8 +82,72 @@ fn test_prims() {
 }
 
 #[test]
+fn test_unit_struct() {
+    // serde_derive expects a unit type for unit structs
+    #[derive(Deserialize)]
+    struct FooNewType;
+    assert_deserialize!(test_unit_struct, FooNewType);
+}
+
+#[test]
+fn test_newtype_struct() {
+
+    #[derive(Deserialize)]
+    struct Foo(u8);
+    assert_deserialize!(test_newtype_foo, Foo);
+
+
+    // test that worlds stupidest linked list works
+    // #[derive(Deserialize)]
+    // struct List(Option<Box<List>>);
+
+    // assert_deserialize!(test_empty_ll, List, 0);
+    // assert_deserialize!(test_full_ll, List, 1);
+    
+    
+}
+
+#[test]
 fn test_tuple() {
     assert_deserialize!(test_2_tuple, (u8,u16));
+}
+
+#[test]
+fn test_tuple_struct() {
+    #[derive(Deserialize)]
+    struct Foo(u8,u16);
+    assert_deserialize!(test_tuple_struct, Foo);
+}
+
+#[test]
+fn test_struct() {
+    #[derive(Deserialize)]
+    struct Foo {
+        _a: u8, 
+        _b: u16,
+    }
+
+    // this struct looks like a tuple at first, but its not
+    #[derive(Deserialize)]
+    struct AlmostTuple {
+        __0: u8, 
+        _b: u16,
+    }
+
+    // make sure that even if fields are in an arbitary unsorted order, we properly check for them
+    #[derive(Deserialize)]
+    struct Unsorted {
+        _1: u8, 
+        _b: i8, 
+        _a: u16,
+        _bb: String,
+    }
+    
+    assert_deserialize!(test_struct, Foo);
+    assert_deserialize!(test_almost_tuple, AlmostTuple);
+    assert_deserialize!(test_unsorted_struct, Unsorted);
+    
+    
 }
 
 
@@ -93,3 +157,21 @@ fn test_option() {
     assert_deserialize!(test_option_some, Option<u8>, 1);
 }
 
+#[test]
+fn test_enum() {
+    #[derive(Deserialize)]
+    enum Foo {
+        A,
+        B(u8),
+        C(u8,u16),
+        D {
+            _a: u32
+        }
+    }
+
+    assert_deserialize!(test_enum_var_a, Foo, 0);
+    assert_deserialize!(test_enum_var_b, Foo, 1);
+    assert_deserialize!(test_enum_var_c, Foo, 2);
+    assert_deserialize!(test_enum_var_d, Foo, 3);
+
+}

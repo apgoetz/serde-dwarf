@@ -5,7 +5,7 @@ use std::ops::Bound;
 use std::result;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::TryFrom;
-
+use indexmap::IndexMap;
 // struct to build types from debug entries
 
 // contains the results of all of our unit parsing
@@ -68,30 +68,90 @@ impl<'i> UnitResults<'i> {
         let (unit, u_offset) = self.di_to_unit(offset)?;
         // if we can build an entry here
         let entry = unit.entry(u_offset).ok()?;
-        let name = self.di_parser.get_str_val(&entry, constants::DW_AT_name);
+        let name = self.di_parser.get_str_val(&entry, constants::DW_AT_name).ok()??;
         let _namespace = self.get_namespace(offset);
         match entry.tag() {
             constants::DW_TAG_base_type => {
-                let prim = typ::PrimitiveType::try_from(name.ok()??).ok()?;
+                let prim = typ::PrimitiveType::try_from(name).ok()?;
                 builder.add_prim(offset, prim);
             }
             constants::DW_TAG_structure_type => {
-                // if we found a tuple
-                if self.try_add_tuple(builder, offset)? {
-		    return Some(());
-                } 
-
-                // otherwise, try to parse as something else only handle the rest of the primitive types
-                match name.ok()?? {
-                    "String" => {builder.add_prim(offset, typ::PrimitiveType::String);}
-                    "&str" => {builder.add_prim(offset, typ::PrimitiveType::String);}
-                    "&[u8]" => {builder.add_prim(offset, typ::PrimitiveType::ByteArray);}
-                    _ => {
-                        eprintln!("cannot add unknown struct!");
-                        self.dump_type_die(offset);
-                        return None;
+                // if it is an enum
+                if let Some(variants) = self.try_parse_enum(offset) {
+                    // different behaviors depending on the enum 
+                    if name.starts_with("Option<") {
+                        //TODO: also check namespace and number of variants
+                        // get the subtypes used by this enum. Options should only have one subtype
+                        let mut types = self.get_variants(&variants)?.1.into_iter();
+                        // if it has a different number:
+                        if types.size_hint() != (1, Some(1)) {
+                            println!("Option Type has more than one subtype, perhaps this isn't core::option?");
+                            return None;
+                        }
+                        // get the type of the generic option
+                        let variant = types.next().unwrap();
+                        builder.add_option(offset, variant);
+                        return self.add_type(builder, variant);
+                    } else  {
+                        // handle the generic enum case
+                        let (variants, subtypes) = self.get_variants(&variants)?;
+                        builder.add_enum(offset, name, &variants);
+                        // add all of the fields in the type
+                        for k in subtypes {
+                            self.add_type(builder, k)?;
+                        }
+                        return Some(());                        
                     }
+
+                    // else if it is a struct
+                } else if let Some(fields) = self.try_parse_struct(offset) {
+
+                    if fields.0.is_empty() {
+                        // handle unit struct
+                        builder.add_unit_struct(offset, name);
+                    } else if name.starts_with('(') {
+                        // if we found a tuple
+                        if self.is_tuple(&fields) {
+                            builder.add_tuple(offset, &fields.1);
+                        } else {
+                            // tuple could not be parsed, but the name starts with tuple
+                            println!("tuple has malformed fields!");
+                            self.dump_type_die(offset);
+                            return None;
+                        }
+                    } else if self.is_tuple(&fields) {
+                        // if it has tuple named fields
+                        if  fields.0.len() == 1 {
+                            //we have a newtype
+                            builder.add_newtype(offset, name, fields.1[0]);
+                        } else {
+                            // we have a tuplestruct
+                            builder.add_tuple_struct(offset, name, &fields.1);
+                        }
+                    } else {
+                        // we are handling normal structs. First, handle special cases from core: 
+                        match name {
+                            "String" | "&str" => {builder.add_prim(offset, typ::PrimitiveType::String); return Some(());}
+                            "&[u8]" => {builder.add_prim(offset, typ::PrimitiveType::ByteArray); return Some(());}
+                            _ => {
+                                // we get to the "normal" struct case
+                                let map_fields = fields.0.iter().map(|f|String::from(*f)).zip(fields.1.iter().copied()).collect::<IndexMap<_,_>>();
+                                builder.add_struct(offset, name, &map_fields);
+                            }
+                        }
+                    }
+                    // add all of the fields in the type
+                    for offset in fields.1 {
+                        self.add_type(builder, offset)?;
+                    }
+                    return Some(());
+                } else {
+                    println!("cannot add unknown DW_TAG_structure {}!", name);
+                    self.dump_type_die(offset);
+                    return None;
                 }
+
+                
             },
             _ => {return None;}
         }
@@ -101,46 +161,145 @@ impl<'i> UnitResults<'i> {
     // returns None if parsing failed
     // returns Ok(true) if we found a tuple
     // returns Ok(false) if we did not find a tuple
-    fn try_add_tuple(&self,
-                     builder: &mut typ::TypeBuilder<gimli::DebugInfoOffset>,
-                     offset: gimli::DebugInfoOffset) -> Option<bool> {
+    fn add_tuple(&self,
+                 builder: &mut typ::TypeBuilder<gimli::DebugInfoOffset>,
+                 offset: gimli::DebugInfoOffset,
+                 fields: (Vec<&'i str>, Vec<gimli::DebugInfoOffset>)) -> Option<()> {
+
+        let fields = fields.1;
+        builder.add_tuple(offset, &fields);
+        for offset in fields {
+            if self.add_type(builder, offset).is_none() {
+                eprintln!("could not add tuple field!");
+		return None;
+            }
+        }
+        Some(())
+    }
+
+    
+    // returns true if field names match tuple convention
+    // returns false if field names do not match tuple convention
+    fn is_tuple(&self,
+                fields: &(Vec<&'i str>, Vec<gimli::DebugInfoOffset>)) -> bool {
+        const MAX_TUPLE : usize = 16;
+        // if we have some fields, we may have found a tuple.
+        // need to make sure 
+        if !fields.0.is_empty() && fields.0.len() <= MAX_TUPLE {
+
+            // check that each field has the right format.
+            // for now, rust encodes tuples in debuginfo as a struct with each field of the for __0, __1, etc.
+            let tuple_names = (0..MAX_TUPLE).map(|x| format!("__{}", x)).collect::<Vec<_>>();
+
+            for (field, tup_field) in fields.0.iter().zip(tuple_names.iter()) {
+                if field != tup_field {
+                    // one of these fields does not match: its not a tuple
+                    return false;
+                }
+            }
+            return true
+        }
+        return false
+    }
+
+    // returns None if parsing failed
+    // returns Some(_) if we found a struct
+    fn try_parse_struct(&self,
+                     offset: gimli::DebugInfoOffset) -> Option<(Vec<&'i str>, Vec<gimli::DebugInfoOffset>)> {
         let (unit, u_offset) = self.di_to_unit(offset)? ;
         let mut cursor = unit.entries_at_offset(u_offset).ok()? ;
         let mut depth = 0;
-        let mut fields = Vec::new();
+        let mut field_names = Vec::new();
+        let mut field_vals = Vec::new();
         // skip the first DIE, since that is the struct
         cursor.next_dfs().ok()??;
         while let Some((delta_depth, entry)) = cursor.next_dfs().ok()? {
             depth += delta_depth;
-            if depth < 0 {
+            if depth <= 0 {
                 break;
             }
-            let field_name = self.di_parser.get_str_val(&entry, constants::DW_AT_name).ok()??;
-            // tuples always consist of a bunch of fields looking like __0, __1, __2, etc.
-            if entry.tag() == constants::DW_TAG_member && field_name == format!("__{}", fields.len()) {
-                // add the field of this tuple
-                fields.push(get_type(unit, &entry).ok()?);
-            } else {
-		// we found something valid that is not a tuple
-                return Some(false);
-            }
+            field_names.push(self.di_parser.get_str_val(&entry, constants::DW_AT_name).ok()??);
+            field_vals.push(get_type(unit, &entry).ok()?);
         }
-        // if we have some fields, we have found a tuple
-        if !fields.is_empty() {
-            builder.add_tuple(offset, &fields);
-            for offset in fields {
-                if self.add_type(builder, offset).is_none() {
-                    eprintln!("could not add tuple field!");
-		    return None;
-                }
-            }
-            return Some(true)
-        }
-        return None
+        Some((field_names, field_vals))
     }
 
+    // returns None if parsing failed
+    // returns Some(_) if we found an enum
+    fn try_parse_enum(&self,
+                     offset: gimli::DebugInfoOffset) -> Option<(Vec<&'i str>, Vec<gimli::DebugInfoOffset>)> {
+        let (unit, u_offset) = self.di_to_unit(offset)? ;
+        let mut cursor = unit.entries_at_offset(u_offset).ok()? ;
+        let mut depth = 0;
+        let mut variant_names = Vec::new();
+        let mut variant_vals = Vec::new();
+        // skip the first DIE, since that is the enum 
+        cursor.next_dfs().ok()??;
+        // get the next element, which should be the variant description
+        if let Some((_, entry)) = cursor.next_dfs().ok()? {
+            // make sure we have an enum variant thingy
+            if entry.tag() != constants::DW_TAG_variant_part {
+                return None;
+            }
+            // now we can parse the entries
+            while let Some((delta_depth, entry)) = cursor.next_dfs().ok()? {
+                depth += delta_depth;
+                if depth <= 0 {
+                    break;
+                }
+                // if we are at a variant: 
+                if entry.tag() == constants::DW_TAG_variant {
+                    // the child of this DIE describes the name and type of the variant
+                    if let Some((delta_depth, entry)) = cursor.next_dfs().ok()? {
+                        depth += delta_depth;
+                        variant_names.push(self.di_parser.get_str_val(&entry, constants::DW_AT_name).ok()??);
+                        variant_vals.push(get_type(unit, &entry).ok()?);
+                    }
+                }
+            }
+            Some((variant_names, variant_vals))
+        } else {
+            None
+        }
+    }
 
+    // build a bunch of variants 
+    fn get_variants(&self, variants: &(Vec<&'i str>, Vec<gimli::DebugInfoOffset>))
+                    -> Option<(Vec<typ::Variant<gimli::DebugInfoOffset>>, HashSet<gimli::DebugInfoOffset>)>
+    {
+        let mut results = Vec::with_capacity(variants.0.len());
+        let mut subtypes = HashSet::new();
+        for (&name, &offset) in variants.0.iter().zip(variants.1.iter()) {
+            let name = String::from(name);
+            if let Some(fields) = self.try_parse_struct(offset) {
+                
+                if fields.0.is_empty() {
+                    // handle unit struct
+                    results.push(typ::Variant::Unit(name));
+                } else if self.is_tuple(&fields) {
+                    // if it has tuple named fields
+                    if  fields.0.len() == 1 {
+                        //we have a newtype
+                        results.push(typ::Variant::NewType(name, fields.1[0]));
+                        subtypes.insert(fields.1[0]);
+                    } else {
+                        // we have a tuplestruct
+                        subtypes.extend(fields.1.iter().copied());
+                        results.push(typ::Variant::Tuple(name, fields.1));
+                    }
+                } else {
+                    // we are handling normal structs. 
 
+                    subtypes.extend(fields.1.iter().copied());
+                    let map_fields = fields.0.iter().map(|f|String::from(*f)).zip(fields.1.iter().copied()).collect::<IndexMap<_,_>>();
+                    results.push(typ::Variant::Struct(name, map_fields));
+                }
+            } else {
+                return None;
+            }
+        }
+        Some((results, subtypes))
+    }
     
     // constructs a typebuilder and adds  a type
     fn get_typebuilder(&self,
@@ -197,12 +356,19 @@ impl<'i> UnitResults<'i> {
                 if let Some(Some(namespace)) = namespace {
                     eprintln!("namespace: {}", namespace);
                 }
-                while let Ok(Some((delta_depth, entry))) = cursor.next_dfs() {
+
+                // dump the first entry
+                if let Ok(Some((delta_depth, entry))) = cursor.next_dfs() {
                     depth += delta_depth;
-                    if depth < 0 {
-                        return;
-                    }
                     self.di_parser.dump_die(depth as usize, &entry).ok();
+                    // dump child entries
+                    while let Ok(Some((delta_depth, entry))) = cursor.next_dfs() {
+                        depth += delta_depth;
+                        if depth <= 0 {
+                            return;
+                        }
+                        self.di_parser.dump_die(depth as usize, &entry).ok();
+                    }
                 }
             }
         }
