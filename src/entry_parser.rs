@@ -1,14 +1,16 @@
-use crate::typ;
-use crate::parser::{UnitOffset,Reader,DebugInfoParser, UnitParser, unit_to_di, get_type, get_array_length};
 use crate::err::InternalError;
+use crate::parser::{
+    get_array_length, get_type, unit_to_di, DebugInfoParser, Reader, UnitOffset, UnitParser,
+};
+use crate::typ;
 
 use gimli::constants;
-use std::ops::Bound;
-use std::result;
-use std::io::Write;
+use indexmap::IndexMap;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::TryFrom;
-use indexmap::IndexMap;
+use std::io::Write;
+use std::ops::Bound;
+use std::result;
 // struct to build types from debug entries
 
 // contains the results of all of our unit parsing
@@ -21,10 +23,8 @@ pub struct UnitResults<'i> {
     // symbols we want to export
     pub symbol_types: HashMap<&'i str, gimli::DebugInfoOffset>,
     // info on serializable types we want to support
-    pub  serialize_types: HashSet<gimli::DebugInfoOffset>,
+    pub serialize_types: HashSet<gimli::DebugInfoOffset>,
 }
-
-
 
 impl<'i> UnitResults<'i> {
     pub fn new(di_parser: &'i DebugInfoParser<'i>) -> Self {
@@ -36,7 +36,7 @@ impl<'i> UnitResults<'i> {
             serialize_types: HashSet::new(),
         }
     }
-    
+
     pub fn add_unit(&mut self, unit: UnitParser<'i>) {
         let UnitParser {
             symbol_types,
@@ -64,35 +64,51 @@ impl<'i> UnitResults<'i> {
 
     // this is a big function, it parses a  DIE  and maps it onto
     // the Serde data model
-    pub fn add_type(&self,
-                builder: &mut typ::TypeBuilder<gimli::DebugInfoOffset>,
-                offset: gimli::DebugInfoOffset) -> Result<(), InternalError> {
-        // if we have visited this type before, we can leave, it is already added 
-        if builder.contains_key(offset) {return Ok(());}
+    pub fn add_type(
+        &self,
+        builder: &mut typ::TypeBuilder<gimli::DebugInfoOffset>,
+        offset: gimli::DebugInfoOffset,
+    ) -> Result<(), InternalError> {
+        // if we have visited this type before, we can leave, it is already added
+        if builder.contains_key(offset) {
+            return Ok(());
+        }
         // get the local offset
-        let (unit, u_offset) = self.di_to_unit(offset).ok_or(InternalError::new(&format!("Could not convert  DIOffset to Unit Offset: {:?}", offset)))?;
+        let (unit, u_offset) = self.di_to_unit(offset).ok_or(InternalError::new(&format!(
+            "Could not convert  DIOffset to Unit Offset: {:?}",
+            offset
+        )))?;
         // if we can build an entry here
-        let entry = unit.entry(u_offset).map_err(|e| InternalError::new(&e.to_string()))?;
-        let name = self.di_parser.get_str_val(&entry, constants::DW_AT_name)
+        let entry = unit
+            .entry(u_offset)
+            .map_err(|e| InternalError::new(&e.to_string()))?;
+        let name = self
+            .di_parser
+            .get_str_val(&entry, constants::DW_AT_name)
             .map_err(|e| InternalError::new(&e.to_string()))?
             .ok_or(InternalError::new("Could not read name of type"))?;
         let _namespace = self.get_namespace(offset);
 
-        
         match entry.tag() {
             constants::DW_TAG_base_type => {
-                let prim = typ::PrimitiveType::try_from(name).map_err(|e| InternalError::new(&e.to_string()))?;
+                let prim = typ::PrimitiveType::try_from(name)
+                    .map_err(|e| InternalError::new(&e.to_string()))?;
                 builder.add_prim(offset, prim);
             }
             constants::DW_TAG_structure_type => {
-                
                 // if it is an enum
                 if let Some(variants) = self.try_parse_enum(offset) {
-                    // different behaviors depending on the enum 
+                    // different behaviors depending on the enum
                     if name.starts_with("Option<") {
                         //TODO: also check namespace and number of variants
                         // get the subtypes used by this enum. Options should only have one subtype
-                        let mut types = self.get_variants(&variants).map_err(|e| e.extend(&format!("Could not get variants for enum {}", name)))?.1.into_iter();
+                        let mut types = self
+                            .get_variants(&variants)
+                            .map_err(|e| {
+                                e.extend(&format!("Could not get variants for enum {}", name))
+                            })?
+                            .1
+                            .into_iter();
                         // if it has a different number:
                         if types.size_hint() != (1, Some(1)) {
                             return Err(InternalError::new("Option Type has more than one subtype, perhaps this isn't core::option?"));
@@ -104,8 +120,10 @@ impl<'i> UnitResults<'i> {
                         if let Err(e) = self.add_type(builder, variant) {
                             builder.remove_key(offset);
                             return Err(e.extend(&format!("Could not parse option {}", name)));
-                        } else {return Ok(()); }
-                    } else  {
+                        } else {
+                            return Ok(());
+                        }
+                    } else {
                         // handle the generic enum case
                         let (variants, subtypes) = self.get_variants(&variants)?;
                         builder.add_enum(offset, name, &variants);
@@ -114,15 +132,19 @@ impl<'i> UnitResults<'i> {
                             if let Err(e) = self.add_type(builder, k) {
                                 //roll back adding the enum
                                 builder.remove_key(offset);
-                                return Err(e.extend(&format!("could not add subtype {:?} of enum {}: DIE is:\n{}", k, name, self.dump_type_die(offset))));
+                                return Err(e.extend(&format!(
+                                    "could not add subtype {:?} of enum {}: DIE is:\n{}",
+                                    k,
+                                    name,
+                                    self.dump_type_die(offset)
+                                )));
                             }
                         }
-                        return Ok(());                        
+                        return Ok(());
                     }
 
-                    // else if it is a struct
+                // else if it is a struct
                 } else if let Some(fields) = self.try_parse_struct(offset) {
-                    
                     if name.starts_with("Vec<") {
                         if let Some(params) = self.get_template_params(offset) {
                             if let Some(subtype) = params.get(0) {
@@ -130,17 +152,26 @@ impl<'i> UnitResults<'i> {
                                 // if we cannot add the type of this vec
                                 if let Err(e) = self.add_type(builder, *subtype) {
                                     builder.remove_key(offset);
-                                    return Err(e.extend(&format!("could not add subtype {:?} of {}", *subtype, name)));
-                                } 
+                                    return Err(e.extend(&format!(
+                                        "could not add subtype {:?} of {}",
+                                        *subtype, name
+                                    )));
+                                }
                             } else {
-                                return Err(InternalError::new(&format!("Vec<_> has no template params:\n{}", self.dump_type_die(offset))));
+                                return Err(InternalError::new(&format!(
+                                    "Vec<_> has no template params:\n{}",
+                                    self.dump_type_die(offset)
+                                )));
                             }
-                            return Ok(())
+                            return Ok(());
                         } else {
-                            return Err(InternalError::new(&format!("cannot get Vec<_> template params:\n{}", self.dump_type_die(offset))));
+                            return Err(InternalError::new(&format!(
+                                "cannot get Vec<_> template params:\n{}",
+                                self.dump_type_die(offset)
+                            )));
                         }
                     }
-                    
+
                     if fields.0.is_empty() {
                         // handle unit struct
                         builder.add_unit_struct(offset, name);
@@ -154,7 +185,7 @@ impl<'i> UnitResults<'i> {
                         }
                     } else if self.is_tuple(&fields) {
                         // if it has tuple named fields
-                        if  fields.0.len() == 1 {
+                        if fields.0.len() == 1 {
                             //we have a newtype
                             builder.add_newtype(offset, name, fields.1[0]);
                         } else {
@@ -162,13 +193,24 @@ impl<'i> UnitResults<'i> {
                             builder.add_tuple_struct(offset, name, &fields.1);
                         }
                     } else {
-                        // we are handling normal structs. First, handle special cases from core: 
+                        // we are handling normal structs. First, handle special cases from core:
                         match name {
-                            "String" | "&str" => {builder.add_prim(offset, typ::PrimitiveType::String); return Ok(());}
-                            "&[u8]" => {builder.add_prim(offset, typ::PrimitiveType::ByteArray); return Ok(());}
+                            "String" | "&str" => {
+                                builder.add_prim(offset, typ::PrimitiveType::String);
+                                return Ok(());
+                            }
+                            "&[u8]" => {
+                                builder.add_prim(offset, typ::PrimitiveType::ByteArray);
+                                return Ok(());
+                            }
                             _ => {
                                 // we get to the "normal" struct case
-                                let map_fields = fields.0.iter().map(|f|String::from(*f)).zip(fields.1.iter().copied()).collect::<IndexMap<_,_>>();
+                                let map_fields = fields
+                                    .0
+                                    .iter()
+                                    .map(|f| String::from(*f))
+                                    .zip(fields.1.iter().copied())
+                                    .collect::<IndexMap<_, _>>();
                                 builder.add_struct(offset, name, &map_fields);
                             }
                         }
@@ -178,21 +220,33 @@ impl<'i> UnitResults<'i> {
                         if let Err(e) = self.add_type(builder, *f_offset) {
                             // roll back adding the struct
                             builder.remove_key(offset);
-                            return Err(e.extend(&format!("could not add field {} of struct {}: DIE is: \n{}", fieldname, name, self.dump_type_die(offset))));
+                            return Err(e.extend(&format!(
+                                "could not add field {} of struct {}: DIE is: \n{}",
+                                fieldname,
+                                name,
+                                self.dump_type_die(offset)
+                            )));
                         }
                     }
                     return Ok(());
                 } else {
-                    return Err(InternalError::new(&format!("cannot add unknown DW_TAG_structure:\n {}", self.dump_type_die(offset))));
+                    return Err(InternalError::new(&format!(
+                        "cannot add unknown DW_TAG_structure:\n {}",
+                        self.dump_type_die(offset)
+                    )));
                 }
-
-                
-            },
+            }
             constants::DW_TAG_pointer_type => {
-                return Err(InternalError::new(&format!("cannot add pointer type:\n{}", self.dump_type_die(offset))));
+                return Err(InternalError::new(&format!(
+                    "cannot add pointer type:\n{}",
+                    self.dump_type_die(offset)
+                )));
             }
             _ => {
-                return Err(InternalError::new(&format!("cannot add type with tag {:?}", entry.tag())));
+                return Err(InternalError::new(&format!(
+                    "cannot add type with tag {:?}",
+                    entry.tag()
+                )));
             }
         }
         Ok(())
@@ -201,32 +255,33 @@ impl<'i> UnitResults<'i> {
     // returns None if parsing failed
     // returns Ok(true) if we found a tuple
     // returns Ok(false) if we did not find a tuple
-    fn add_tuple(&self,
-                 builder: &mut typ::TypeBuilder<gimli::DebugInfoOffset>,
-                 offset: gimli::DebugInfoOffset,
-                 fields: (Vec<&'i str>, Vec<gimli::DebugInfoOffset>)) -> Result<(), InternalError> {
-
+    fn add_tuple(
+        &self,
+        builder: &mut typ::TypeBuilder<gimli::DebugInfoOffset>,
+        offset: gimli::DebugInfoOffset,
+        fields: (Vec<&'i str>, Vec<gimli::DebugInfoOffset>),
+    ) -> Result<(), InternalError> {
         let fields = fields.1;
         builder.add_tuple(offset, &fields);
         for offset in fields {
-            self.add_type(builder, offset).map_err(|e| e.extend("Could not add tuple"))?;
+            self.add_type(builder, offset)
+                .map_err(|e| e.extend("Could not add tuple"))?;
         }
         Ok(())
     }
 
-    
     // returns true if field names match tuple convention
     // returns false if field names do not match tuple convention
-    fn is_tuple(&self,
-                fields: &(Vec<&'i str>, Vec<gimli::DebugInfoOffset>)) -> bool {
-        const MAX_TUPLE : usize = 16;
+    fn is_tuple(&self, fields: &(Vec<&'i str>, Vec<gimli::DebugInfoOffset>)) -> bool {
+        const MAX_TUPLE: usize = 16;
         // if we have some fields, we may have found a tuple.
-        // need to make sure 
+        // need to make sure
         if !fields.0.is_empty() && fields.0.len() <= MAX_TUPLE {
-
             // check that each field has the right format.
             // for now, rust encodes tuples in debuginfo as a struct with each field of the for __0, __1, etc.
-            let tuple_names = (0..MAX_TUPLE).map(|x| format!("__{}", x)).collect::<Vec<_>>();
+            let tuple_names = (0..MAX_TUPLE)
+                .map(|x| format!("__{}", x))
+                .collect::<Vec<_>>();
 
             for (field, tup_field) in fields.0.iter().zip(tuple_names.iter()) {
                 if field != tup_field {
@@ -234,16 +289,17 @@ impl<'i> UnitResults<'i> {
                     return false;
                 }
             }
-            return true
+            return true;
         }
-        return false
+        return false;
     }
 
-    fn get_template_params(&self,
-                           offset: gimli::DebugInfoOffset
+    fn get_template_params(
+        &self,
+        offset: gimli::DebugInfoOffset,
     ) -> Option<Vec<gimli::DebugInfoOffset>> {
-        let (unit, u_offset) = self.di_to_unit(offset)? ;
-        let mut cursor = unit.entries_at_offset(u_offset).ok()? ;
+        let (unit, u_offset) = self.di_to_unit(offset)?;
+        let mut cursor = unit.entries_at_offset(u_offset).ok()?;
         let mut depth = 0;
         let mut params = Vec::new();
         // skip the first DIE, since that is the struct
@@ -260,13 +316,14 @@ impl<'i> UnitResults<'i> {
         Some(params)
     }
 
-    
     // returns None if parsing failed
     // returns Some(_) if we found a struct
-    fn try_parse_struct(&self,
-                     offset: gimli::DebugInfoOffset) -> Option<(Vec<&'i str>, Vec<gimli::DebugInfoOffset>)> {
-        let (unit, u_offset) = self.di_to_unit(offset)? ;
-        let mut cursor = unit.entries_at_offset(u_offset).ok()? ;
+    fn try_parse_struct(
+        &self,
+        offset: gimli::DebugInfoOffset,
+    ) -> Option<(Vec<&'i str>, Vec<gimli::DebugInfoOffset>)> {
+        let (unit, u_offset) = self.di_to_unit(offset)?;
+        let mut cursor = unit.entries_at_offset(u_offset).ok()?;
         let mut depth = 0;
         let mut field_names = Vec::new();
         let mut field_vals = Vec::new();
@@ -278,7 +335,11 @@ impl<'i> UnitResults<'i> {
                 break;
             }
             if entry.tag() == constants::DW_TAG_member {
-                field_names.push(self.di_parser.get_str_val(&entry, constants::DW_AT_name).ok()??);
+                field_names.push(
+                    self.di_parser
+                        .get_str_val(&entry, constants::DW_AT_name)
+                        .ok()??,
+                );
                 field_vals.push(get_type(unit, &entry).ok()?);
             }
         }
@@ -287,14 +348,16 @@ impl<'i> UnitResults<'i> {
 
     // returns None if parsing failed
     // returns Some(_) if we found an enum
-    fn try_parse_enum(&self,
-                     offset: gimli::DebugInfoOffset) -> Option<(Vec<&'i str>, Vec<gimli::DebugInfoOffset>)> {
-        let (unit, u_offset) = self.di_to_unit(offset)? ;
-        let mut cursor = unit.entries_at_offset(u_offset).ok()? ;
+    fn try_parse_enum(
+        &self,
+        offset: gimli::DebugInfoOffset,
+    ) -> Option<(Vec<&'i str>, Vec<gimli::DebugInfoOffset>)> {
+        let (unit, u_offset) = self.di_to_unit(offset)?;
+        let mut cursor = unit.entries_at_offset(u_offset).ok()?;
         let mut depth = 0;
         let mut variant_names = Vec::new();
         let mut variant_vals = Vec::new();
-        // skip the first DIE, since that is the enum 
+        // skip the first DIE, since that is the enum
         cursor.next_dfs().ok()??;
         // get the next element, which should be the variant description
         if let Some((_, entry)) = cursor.next_dfs().ok()? {
@@ -308,12 +371,16 @@ impl<'i> UnitResults<'i> {
                 if depth <= 0 {
                     break;
                 }
-                // if we are at a variant: 
+                // if we are at a variant:
                 if entry.tag() == constants::DW_TAG_variant {
                     // the child of this DIE describes the name and type of the variant
                     if let Some((delta_depth, entry)) = cursor.next_dfs().ok()? {
                         depth += delta_depth;
-                        variant_names.push(self.di_parser.get_str_val(&entry, constants::DW_AT_name).ok()??);
+                        variant_names.push(
+                            self.di_parser
+                                .get_str_val(&entry, constants::DW_AT_name)
+                                .ok()??,
+                        );
                         variant_vals.push(get_type(unit, &entry).ok()?);
                     }
                 }
@@ -324,22 +391,34 @@ impl<'i> UnitResults<'i> {
         }
     }
 
-    // build a bunch of variants 
-    fn get_variants(&self, variants: &(Vec<&'i str>, Vec<gimli::DebugInfoOffset>))
-                    -> Result<(Vec<typ::Variant<gimli::DebugInfoOffset>>, HashSet<gimli::DebugInfoOffset>), InternalError>
-    {
+    // build a bunch of variants
+    fn get_variants(
+        &self,
+        variants: &(Vec<&'i str>, Vec<gimli::DebugInfoOffset>),
+    ) -> Result<
+        (
+            Vec<typ::Variant<gimli::DebugInfoOffset>>,
+            HashSet<gimli::DebugInfoOffset>,
+        ),
+        InternalError,
+    > {
         let mut results = Vec::with_capacity(variants.0.len());
         let mut subtypes = HashSet::new();
         for (&name, &offset) in variants.0.iter().zip(variants.1.iter()) {
             let name = String::from(name);
-            let fields = self.try_parse_struct(offset).ok_or(InternalError::new(&format!("could not get struct fields for struct {}", name)))?; 
-            
+            let fields = self
+                .try_parse_struct(offset)
+                .ok_or(InternalError::new(&format!(
+                    "could not get struct fields for struct {}",
+                    name
+                )))?;
+
             if fields.0.is_empty() {
                 // handle unit struct
                 results.push(typ::Variant::Unit(name));
             } else if self.is_tuple(&fields) {
                 // if it has tuple named fields
-                if  fields.0.len() == 1 {
+                if fields.0.len() == 1 {
                     //we have a newtype
                     results.push(typ::Variant::NewType(name, fields.1[0]));
                     subtypes.insert(fields.1[0]);
@@ -349,17 +428,21 @@ impl<'i> UnitResults<'i> {
                     results.push(typ::Variant::Tuple(name, fields.1));
                 }
             } else {
-                // we are handling normal structs. 
+                // we are handling normal structs.
 
                 subtypes.extend(fields.1.iter().copied());
-                let map_fields = fields.0.iter().map(|f|String::from(*f)).zip(fields.1.iter().copied()).collect::<IndexMap<_,_>>();
+                let map_fields = fields
+                    .0
+                    .iter()
+                    .map(|f| String::from(*f))
+                    .zip(fields.1.iter().copied())
+                    .collect::<IndexMap<_, _>>();
                 results.push(typ::Variant::Struct(name, map_fields));
             }
-
         }
         Ok((results, subtypes))
     }
-    
+
     // // constructs a typebuilder and adds  a type
     // fn get_typebuilder(&self,
     //                    offset: gimli::DebugInfoOffset)
@@ -368,7 +451,7 @@ impl<'i> UnitResults<'i> {
     //     self.add_type(&mut builder, offset)?;
     //     Some(builder)
     // }
-    
+
     // converts a DIE that represents a function into the self pointer that represents it
     pub fn subfunction_to_self(
         &self,
@@ -404,10 +487,7 @@ impl<'i> UnitResults<'i> {
         None
     }
 
-    fn dump_type_die (
-        &self,
-        offset: gimli::DebugInfoOffset,
-    ) -> String {
+    fn dump_type_die(&self, offset: gimli::DebugInfoOffset) -> String {
         let mut buf = Vec::<u8>::new();
         let namespace = self.get_namespace(offset);
         if let Some((unit, offset)) = self.di_to_unit(offset) {
@@ -420,14 +500,18 @@ impl<'i> UnitResults<'i> {
                 // dump the first entry
                 if let Ok(Some((delta_depth, entry))) = cursor.next_dfs() {
                     depth += delta_depth;
-                    self.di_parser.dump_die(&mut buf, depth as usize, &entry).ok();
+                    self.di_parser
+                        .dump_die(&mut buf, depth as usize, &entry)
+                        .ok();
                     // dump child entries
                     while let Ok(Some((delta_depth, entry))) = cursor.next_dfs() {
                         depth += delta_depth;
                         if depth <= 0 {
                             break;
                         }
-                        self.di_parser.dump_die(&mut buf, depth as usize, &entry).ok();
+                        self.di_parser
+                            .dump_die(&mut buf, depth as usize, &entry)
+                            .ok();
                     }
                 }
             }
@@ -435,7 +519,7 @@ impl<'i> UnitResults<'i> {
         //print the DIE, if somehow there is non-utf8 bytes , we just replace with a placeholder
         String::from_utf8(buf).unwrap_or(String::from("???"))
     }
-    
+
     // converter a debuginfo offset into the unit it came from and the redirected unit offset
     fn di_to_unit(
         &self,
@@ -475,9 +559,11 @@ impl<'i> UnitResults<'i> {
             } else {
                 Some(name)
             }
-        } else { None }
+        } else {
+            None
+        }
     }
-    
+
     // get the typename of a type. if the type is invalid, or is
     // located in a hidden namespace, the None is returned
     // returns (name, namespace)
@@ -515,7 +601,7 @@ impl<'i> UnitResults<'i> {
                     constants::DW_TAG_array_type => {
                         let subtype = get_type(unit, &entry).ok()?;
 
-                        let (name,namespace) = self.get_fullname(subtype)?;
+                        let (name, namespace) = self.get_fullname(subtype)?;
                         let len = get_array_length(unit, u_offset)?;
 
                         if !namespace.is_empty() {
@@ -523,7 +609,7 @@ impl<'i> UnitResults<'i> {
                         } else {
                             Some((format!("[{}; {}]", name, len), String::new()))
                         }
-                    },
+                    }
                     _ => {
                         if let Ok(Some(name)) = name {
                             eprintln!("unknown type: {}", name);

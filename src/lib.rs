@@ -2,39 +2,39 @@
 //! # Introduction
 //! Deserialize [serde](https://serde.rs) data types without implementing
 //! `serde::Deserialize`
-//! 
+//!
 //! `serde_dwarf` provides wrappers to implement `deserialize_any` for
 //! non-self descriptive data types.
-//! 
+//!
 //! This means you can deserialize values without actually having to know
 //! their concrete type.
-//! 
+//!
 //! The `Value` types constructed by `serde_dwarf` can then be inspected
 //! or re-serialized in any arbitrary serde data format, and can be
 //! re-deserialized into the rust data type.
-//! 
+//!
 //! Possible use cases:
-//! 
+//!
 //! + jq for bincode
 //! + [serde_transcode](https://docs.rs/serde_transcode) for non-self describing data types
 //! + deserializer for embedded users of `serde`
-//! 
+//!
 //! # How It Works
-//! 
+//!
 //! `serde_dwarf` works by parsing the DWARF debuginfo that is generated
 //! for any `serde` using code. This provides enough information to
 //! reconstruct the `#[derive(Serialize)]` impls, assuming that the code
 //! isn't using too many of the serde attribute decorators. Once
 //! `serde_dwarf` knows about the type definition, you can now deserialize
 //! it into a generic `Value` enum.
-//! 
+//!
 //! Note that you don't actually need to tell serde_dwarf about the
 //! `Serialize` impls at compile time, all of the parsing is done
 //! dynamically. This allows for the creation of `serde` inspection tools
 //! that are crate-agnostic.
-//! 
+//!
 //! # Caveats and Soundness
-//! 
+//!
 //! `serde_dwarf` works be reconstructing the `Serialize` impl that
 //! `serde` would have created for a data type. This means that it cannot
 //! work on data types that define their own custom deserialization code,
@@ -43,66 +43,66 @@
 //! serialization, for
 //! example [skip](https://serde.rs/field-attrs.html#skip), the
 //! deserialization will not be correct.
-//! 
+//!
 //! This also means that `serde_dwarf` contains a potentially buggy
 //! reimplementation of the serialize and deserialize derive macros, that
 //! could potentially get out of date as serde is updated. We try to stay
 //! on top of this by testing that `serde_dwarf` drives the
 //! Deserialization Visitors in exactly the same way as `serde` itself,
 //! but there is some duplication of effort here.
-//! 
+//!
 //! This means that if you specify the wrong data type for the conversion,
 //! or if the `Deserialize` impl has a custom implementation, you will
-//! get garbage data, and `serde_dwarf` may or may not report an error. 
-//! 
+//! get garbage data, and `serde_dwarf` may or may not report an error.
+//!
 //! Taken together, this means that `serde_dwarf` really isn't suited for
 //! use in a production environment, but instead for tools for inspecting
 //! and manipulating `serde` serialized data. Think of it more like gdb's
 //! rust parser.
-//! 
+//!
 //! # Example
-//! 
+//!
 //! ```no_run
 //! #
 //! # //for some reason, this doesnt work when run in the rustdoc environment
 //! #
-//! use serde_dwarf::DebugInfoBuilder; 
-//! use serde::de::DeserializeSeed; 
+//! use serde_dwarf::DebugInfoBuilder;
+//! use serde::de::DeserializeSeed;
 //! use bincode::Options;
-//! 
-//! // an instance we want to serialize 
+//!
+//! // an instance we want to serialize
 //! let target = ("abc", 1, 2, 3);
-//! 
-//! // serialize it to bytes using bincode 
+//!
+//! // serialize it to bytes using bincode
 //! let encoded: Vec<u8> = bincode::serialize(&target).unwrap();
-//! 
-//! // read out the types defined in the debug info of this executable 
+//!
+//! // read out the types defined in the debug info of this executable
 //! let di = DebugInfoBuilder::new().parse_path(std::env::current_exe().unwrap()).unwrap();
 //! let typ = di.typ("(&str, i32, i32, i32)").unwrap();
-//! 
-//! // build a bincode deserializer 
-//! let opts = bincode::DefaultOptions::new().with_fixint_encoding(); 
+//!
+//! // build a bincode deserializer
+//! let opts = bincode::DefaultOptions::new().with_fixint_encoding();
 //! let mut deserializer = bincode::Deserializer::from_slice(&encoded, opts);
-//! 
+//!
 //! // we can now deserialize the bytes into a Value struct.
 //! // note that we aren't actually using the type of target above
 //! println!("{:?}",typ.deserialize(&mut deserializer).unwrap());
 //! ```
 
 use core::result;
+use gimli::{self};
+use std::collections::{hash_map, HashMap, HashSet};
 use std::error;
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::Path;
-use gimli::{self};
-use std::collections::{HashMap, HashSet, hash_map};
 
-mod parser;
-mod entry_parser;
-mod typ;
 mod de;
+mod entry_parser;
 mod err;
+mod parser;
+mod typ;
 pub use typ::Type;
 #[derive(Debug)]
 enum ErrorCode {
@@ -161,7 +161,6 @@ impl From<io::Error> for Error {
     }
 }
 
-
 impl From<object::Error> for Error {
     fn from(err: object::Error) -> Self {
         Error(ErrorImpl {
@@ -219,7 +218,7 @@ pub enum Value {
     TupleStruct(String, Vec<Value>),
     Struct(String, Vec<(String, Value)>),
     Enum(String, Variant),
-    Seq(Vec<Value>)
+    Seq(Vec<Value>),
 }
 #[derive(Debug)]
 pub enum Variant {
@@ -305,7 +304,7 @@ impl DebugInfoBuilder {
     /// of the listed strings in order to be extracted. Type must also
     /// implement serde::Serialize
     pub fn filter_type_list<'a, I>(&'a mut self, i: I) -> &'a DebugInfoBuilder
-        where
+    where
         I: IntoIterator,
         I::Item: AsRef<str>,
     {
@@ -329,10 +328,9 @@ impl DebugInfoBuilder {
     /// specfiy a list of strings. symbols in debuginfo must match one of
     /// the listed strings in order to be extracted
     pub fn filter_sym_list<'a, I>(&'a mut self, i: I) -> &'a DebugInfoBuilder
-        where
+    where
         I: IntoIterator,
         I::Item: AsRef<str>,
-
     {
         self.filter = Filter::SymbolList(i.into_iter().map(|s| String::from(s.as_ref())).collect());
         self
@@ -406,7 +404,7 @@ impl DebugInfoBuilder {
     }
 }
 
-/// helper struct to allow iteration over types in a DebugInfo struct 
+/// helper struct to allow iteration over types in a DebugInfo struct
 pub struct Iter<'a>(hash_map::Keys<'a, String, gimli::DebugInfoOffset>);
 
 impl Clone for Iter<'_> {
@@ -447,7 +445,7 @@ pub struct DebugInfo {
     types: HashMap<String, gimli::DebugInfoOffset>,
     syms: HashMap<String, gimli::DebugInfoOffset>,
     symtypes: HashMap<String, String>,
-    builder: typ::TypeBuilder<gimli::DebugInfoOffset>
+    builder: typ::TypeBuilder<gimli::DebugInfoOffset>,
 }
 
 impl DebugInfo {
@@ -460,17 +458,17 @@ impl DebugInfo {
         self.builder.build(*self.types.get(symbol)?)
     }
     /// get an iterator of the symbols we know
-    pub fn syms(&self) ->  Iter {
+    pub fn syms(&self) -> Iter {
         Iter(self.syms.keys())
     }
-    
+
     /// get an iterator of the symbols we know
-    pub fn symtype(&self, symbol: &str) ->  Option<String> {
+    pub fn symtype(&self, symbol: &str) -> Option<String> {
         self.symtypes.get(symbol).map(String::from)
     }
 
     /// get an iterator of the types we know
-    pub fn types(&self) ->  Iter {
+    pub fn types(&self) -> Iter {
         Iter(self.types.keys())
     }
 }
@@ -492,4 +490,3 @@ mod tests {
     #[test]
     fn it_works() {}
 }
-

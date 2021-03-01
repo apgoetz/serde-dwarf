@@ -1,24 +1,24 @@
-use serde::de::{Deserialize,DeserializeSeed, Deserializer, Visitor, SeqAccess, EnumAccess, VariantAccess};
-use serde::de::Error as SerdeError;
-use std::fmt;
-use indexmap::IndexMap;
-use crate::typ::{Type, SubType, TypeKey, PrimitiveType};
+use crate::typ::{PrimitiveType, SubType, Type, TypeKey};
 use crate::Value;
+use indexmap::IndexMap;
+use serde::de::Error as SerdeError;
+use serde::de::{
+    Deserialize, DeserializeSeed, Deserializer, EnumAccess, SeqAccess, VariantAccess, Visitor,
+};
+use std::fmt;
 // TODO: use a better name :(
-use crate::Variant as ValVariant;
 use crate::typ::TypeVariant as TV;
 use crate::typ::Variant;
+use crate::Variant as ValVariant;
 
+const MAX_FIELDS: usize = 64;
+static FIELD_SLICE: [&str; MAX_FIELDS] = [
+    "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+    "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+    "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+];
 
-const MAX_FIELDS : usize = 64;
-static FIELD_SLICE: [&str; MAX_FIELDS] = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
-                                          "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
-                                          "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
-                                          "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""];
-                                          
-
-impl<'de> DeserializeSeed<'de> for Type
-{
+impl<'de> DeserializeSeed<'de> for Type {
     // The return type of the `deserialize` method. This implementation
     // appends onto an existing vector but does not create any new data
     // structure, so the return type is ().
@@ -28,11 +28,11 @@ impl<'de> DeserializeSeed<'de> for Type
     where
         D: Deserializer<'de>,
     {
-	SubType::new(&self).deserialize(deserializer)
+        SubType::new(&self).deserialize(deserializer)
     }
 }
 
-impl<'a,'de> DeserializeSeed<'de> for &SubType<'a> {
+impl<'a, 'de> DeserializeSeed<'de> for &SubType<'a> {
     type Value = Value;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
@@ -43,8 +43,7 @@ impl<'a,'de> DeserializeSeed<'de> for &SubType<'a> {
     }
 }
 
-impl<'a,'de> DeserializeSeed<'de> for SubType<'a>
-{
+impl<'a, 'de> DeserializeSeed<'de> for SubType<'a> {
     // The return type of the `deserialize` method. This implementation
     // appends onto an existing vector but does not create any new data
     // structure, so the return type is ().
@@ -54,17 +53,12 @@ impl<'a,'de> DeserializeSeed<'de> for SubType<'a>
     where
         D: Deserializer<'de>,
     {
-        
-	match &self.parts[self.root] {
-	    TV::Primitive(p) => {
-		p.deserialize(deserializer)
-	    }
+        match &self.parts[self.root] {
+            TV::Primitive(p) => p.deserialize(deserializer),
             TV::Tuple(types) => {
                 deserializer.deserialize_tuple(types.len(), TupleVisitor(&self, types, TupleMarker))
             }
-            TV::Option(k) => {
-                deserializer.deserialize_option(OptionVisitor(self.new_key(*k)))
-            }
+            TV::Option(k) => deserializer.deserialize_option(OptionVisitor(self.new_key(*k))),
             TV::UnitStruct(name) => {
                 // TODO: review what to do for 'static lifetime names. most serde serializers,
                 // deserializers dont seem to even use the name field
@@ -73,17 +67,27 @@ impl<'a,'de> DeserializeSeed<'de> for SubType<'a>
             TV::NewType(name, k) => {
                 // TODO: review what to do for 'static lifetime names. most serde serializers,
                 // deserializers dont seem to even use the name field
-                deserializer.deserialize_newtype_struct("", NewTypeVisitor(name.to_string(), self.new_key(*k)))
+                deserializer.deserialize_newtype_struct(
+                    "",
+                    NewTypeVisitor(name.to_string(), self.new_key(*k)),
+                )
             }
             TV::TupleStruct(name, types) => {
-                // TODO: review what to do for 'static lifetime names. most serde serializers / 
+                // TODO: review what to do for 'static lifetime names. most serde serializers /
                 // deserializers dont seem to even use the name field
-                deserializer.deserialize_tuple_struct("", types.len(), TupleVisitor(&self, types, TupleStructMarker(name.to_string())))
+                deserializer.deserialize_tuple_struct(
+                    "",
+                    types.len(),
+                    TupleVisitor(&self, types, TupleStructMarker(name.to_string())),
+                )
             }
             TV::Struct(name, types) => {
                 let i = types.len();
                 if i > MAX_FIELDS {
-                    return Err(D::Error::custom(format!("Cannot deserialize type with more than {} fields!", MAX_FIELDS)));
+                    return Err(D::Error::custom(format!(
+                        "Cannot deserialize type with more than {} fields!",
+                        MAX_FIELDS
+                    )));
                 }
 
                 // TODO: review what to do for 'static lifetime names. most serde serializers /
@@ -92,18 +96,25 @@ impl<'a,'de> DeserializeSeed<'de> for SubType<'a>
                 // a fake static slice
                 // TODO: implement for map style deserializers, instead of seq style deserializers
                 let marker = StructMarker(name.to_string(), &types);
-                deserializer.deserialize_struct("", &FIELD_SLICE[0..i], TupleVisitor(&self, &types.values().copied().collect::<Vec<_>>(), marker))
+                deserializer.deserialize_struct(
+                    "",
+                    &FIELD_SLICE[0..i],
+                    TupleVisitor(&self, &types.values().copied().collect::<Vec<_>>(), marker),
+                )
             }
             TV::Enum(_, variants) => {
                 let i = variants.len();
                 if i > MAX_FIELDS {
-                    return Err(D::Error::custom(format!("Cannot deserialize enum with more than {} variants!", MAX_FIELDS)));
+                    return Err(D::Error::custom(format!(
+                        "Cannot deserialize enum with more than {} variants!",
+                        MAX_FIELDS
+                    )));
                 }
                 deserializer.deserialize_enum("", &FIELD_SLICE[0..i], EnumVisitor(&self, variants))
             }
             TV::Seq(k, len) => deserializer.deserialize_seq(SeqVisitor(&self.new_key(*k), *len)),
-	    _ => todo!()
-	}
+            _ => todo!(),
+        }
     }
 }
 
@@ -122,8 +133,7 @@ macro_rules! deserialize_prim {
     }
 }
 
-impl<'de> DeserializeSeed<'de> for PrimitiveType
-{
+impl<'de> DeserializeSeed<'de> for PrimitiveType {
     // The return type of the `deserialize` method. This implementation
     // appends onto an existing vector but does not create any new data
     // structure, so the return type is ().
@@ -133,26 +143,26 @@ impl<'de> DeserializeSeed<'de> for PrimitiveType
     where
         D: Deserializer<'de>,
     {
-	deserialize_prim!(self, deserializer,
-			  Bool => bool,
-			  U8 => u8,
-			  U16 => u16,
-			  U32 => u32,
-			  U64 => u64,
-			  U128 => u128,
-			  I8 => i8,
-			  I16 => i16,
-			  I32 => i32,
-			  I64 => i64,
-			  I128 => i128,
-			  F32 => f32,
-			  F64 => f64,
-			  Char => char,
-			  String => String,
-			  ByteArray => Box<[u8]>
-			  // macro also handles () => Unit
-                          
-	)
+        deserialize_prim!(self, deserializer,
+                  Bool => bool,
+                  U8 => u8,
+                  U16 => u16,
+                  U32 => u32,
+                  U64 => u64,
+                  U128 => u128,
+                  I8 => i8,
+                  I16 => i16,
+                  I32 => i32,
+                  I64 => i64,
+                  I128 => i128,
+                  F32 => f32,
+                  F64 => f64,
+                  Char => char,
+                  String => String,
+                  ByteArray => Box<[u8]>
+                  // macro also handles () => Unit
+
+        )
     }
 }
 
@@ -176,56 +186,71 @@ impl Marker for TupleStructMarker {
 struct StructMarker<'a>(String, &'a IndexMap<String, TypeKey>);
 impl<'a> Marker for StructMarker<'a> {
     fn build_result(self, fields: Vec<Value>) -> Value {
-        Value::Struct(self.0, self.1.keys().map(String::from).zip(fields).collect::<Vec<_>>())
+        Value::Struct(
+            self.0,
+            self.1
+                .keys()
+                .map(String::from)
+                .zip(fields)
+                .collect::<Vec<_>>(),
+        )
     }
 }
 
 struct TupleVariantMarker(String, String);
 impl Marker for TupleVariantMarker {
     fn build_result(self, fields: Vec<Value>) -> Value {
-        Value::Enum(self.0,ValVariant::TupleVariant(self.1, fields))
+        Value::Enum(self.0, ValVariant::TupleVariant(self.1, fields))
     }
 }
 
 struct StructVariantMarker<'a>(String, String, &'a IndexMap<String, TypeKey>);
 impl<'a> Marker for StructVariantMarker<'a> {
     fn build_result(self, fields: Vec<Value>) -> Value {
-        Value::Enum(self.0, ValVariant::StructVariant(self.1, self.2.keys().map(String::from).zip(fields).collect::<Vec<_>>()))
+        Value::Enum(
+            self.0,
+            ValVariant::StructVariant(
+                self.1,
+                self.2
+                    .keys()
+                    .map(String::from)
+                    .zip(fields)
+                    .collect::<Vec<_>>(),
+            ),
+        )
     }
 }
 
-
-
 // tuple visistor used for tuples and tuplestructs
-struct TupleVisitor<'a, M:Marker>(&'a SubType<'a>, &'a[TypeKey], M);
+struct TupleVisitor<'a, M: Marker>(&'a SubType<'a>, &'a [TypeKey], M);
 
-impl<'a, 'de, M:Marker> Visitor<'de> for TupleVisitor<'a, M> {
+impl<'a, 'de, M: Marker> Visitor<'de> for TupleVisitor<'a, M> {
     type Value = Value;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-	formatter.write_str("a tuple")
+        formatter.write_str("a tuple")
     }
 
-    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error> 
-	where A: SeqAccess<'de>
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
     {
-	let mut fields : Vec<Value> =
-	    if let Some(length) = seq.size_hint() {
-		Vec::with_capacity(length)
-	    } else {
-		Vec::new()
-	    };
+        let mut fields: Vec<Value> = if let Some(length) = seq.size_hint() {
+            Vec::with_capacity(length)
+        } else {
+            Vec::new()
+        };
 
-	// for each type key in the tuple
-	for k in self.1 {
-	    // if this element is in the tuple
-	    if let Some(value) = seq.next_element_seed(self.0.new_key(*k))? {
-		fields.push(value);
-	    } else {
-		// the seq returned None while we still had fields left to parse
-		return Err(A::Error::custom("tuple had too few fields"));
-	    }
-	}
+        // for each type key in the tuple
+        for k in self.1 {
+            // if this element is in the tuple
+            if let Some(value) = seq.next_element_seed(self.0.new_key(*k))? {
+                fields.push(value);
+            } else {
+                // the seq returned None while we still had fields left to parse
+                return Err(A::Error::custom("tuple had too few fields"));
+            }
+        }
         Ok(self.2.build_result(fields))
     }
 }
@@ -262,9 +287,10 @@ impl<'a, 'de> Visitor<'de> for OptionVisitor<'a> {
     where
         D: Deserializer<'de>,
     {
-        self.0.deserialize(deserializer).map(|v| Value::Option(Some(Box::from(v))))
+        self.0
+            .deserialize(deserializer)
+            .map(|v| Value::Option(Some(Box::from(v))))
     }
-    
 }
 
 struct UnitStructVisitor(String);
@@ -294,20 +320,19 @@ impl<'a, 'de> Visitor<'de> for NewTypeVisitor<'a> {
         write!(formatter, "newtype {}", self.0)
     }
 
-
     #[inline]
     fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
         let Self(name, typ) = self;
-        typ.deserialize(deserializer).map(|v| Value::NewType(name, Box::from(v)))
+        typ.deserialize(deserializer)
+            .map(|v| Value::NewType(name, Box::from(v)))
     }
-    
 }
 
 // tuple visistor used for tuples and tuplestructs
-struct EnumVisitor<'a>(&'a SubType<'a>, &'a[Variant<TypeKey>]);
+struct EnumVisitor<'a>(&'a SubType<'a>, &'a [Variant<TypeKey>]);
 
 impl<'a, 'de> Visitor<'de> for EnumVisitor<'a> {
     type Value = Value;
@@ -317,8 +342,8 @@ impl<'a, 'de> Visitor<'de> for EnumVisitor<'a> {
     }
 
     fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
-        where
-    A: EnumAccess<'de>, 
+    where
+        A: EnumAccess<'de>,
     {
         // deserialize, but only via index
         let (variant, vaccess) = data.variant::<u32>()?;
@@ -326,23 +351,41 @@ impl<'a, 'de> Visitor<'de> for EnumVisitor<'a> {
         if variant >= self.1.len() {
             return Err(A::Error::custom("discriminator too big for enum"));
         }
-        
+
         // process the variant of the enum
         match &self.1[variant] {
             Variant::Unit(name) => {
                 vaccess.unit_variant()?;
-                Ok(Value::Enum(self.0.name(), ValVariant::UnitVariant(String::from(name))))
+                Ok(Value::Enum(
+                    self.0.name(),
+                    ValVariant::UnitVariant(String::from(name)),
+                ))
             }
             Variant::NewType(name, k) => {
                 let value = vaccess.newtype_variant_seed(self.0.new_key(*k))?;
-                Ok(Value::Enum(self.0.name(), ValVariant::NewTypeVariant(String::from(name), Box::from(value))))
+                Ok(Value::Enum(
+                    self.0.name(),
+                    ValVariant::NewTypeVariant(String::from(name), Box::from(value)),
+                ))
             }
-            Variant::Tuple(name, fields) => {
-                vaccess.tuple_variant(fields.len(), TupleVisitor(self.0, fields, TupleVariantMarker(self.0.name(), name.to_string())))
-            }
+            Variant::Tuple(name, fields) => vaccess.tuple_variant(
+                fields.len(),
+                TupleVisitor(
+                    self.0,
+                    fields,
+                    TupleVariantMarker(self.0.name(), name.to_string()),
+                ),
+            ),
             Variant::Struct(name, fields) => {
                 let types = &fields.values().copied().collect::<Vec<_>>();
-                vaccess.tuple_variant(fields.len(), TupleVisitor(self.0, types, StructVariantMarker(self.0.name(), name.to_string(), fields)))
+                vaccess.tuple_variant(
+                    fields.len(),
+                    TupleVisitor(
+                        self.0,
+                        types,
+                        StructVariantMarker(self.0.name(), name.to_string(), fields),
+                    ),
+                )
             }
         }
     }
@@ -355,39 +398,44 @@ impl<'a, 'de> Visitor<'de> for SeqVisitor<'a> {
     type Value = Value;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-	formatter.write_str("a seq")
+        formatter.write_str("a seq")
     }
 
-    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error> 
-	where A: SeqAccess<'de>
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
     {
         // check that the bounds from the type is obeyed
         let expected = self.1;
         let actual = seq.size_hint();
-        if expected.is_some()
-            && actual.is_some()
-            && expected != actual {
-                return Err(A::Error::custom(format!("expected seq length = {}, actual = {} ", expected.unwrap(), actual.unwrap())));
-            }
-        
-        
-	let mut elements : Vec<Value> =
-	    if let Some(length) = actual {
-		Vec::with_capacity(length)
-	    } else {
-		Vec::new()
-	    };
+        if expected.is_some() && actual.is_some() && expected != actual {
+            return Err(A::Error::custom(format!(
+                "expected seq length = {}, actual = {} ",
+                expected.unwrap(),
+                actual.unwrap()
+            )));
+        }
 
-	while let Some(value) = seq.next_element_seed(self.0)? {
-	    elements.push(value);
-	} 
+        let mut elements: Vec<Value> = if let Some(length) = actual {
+            Vec::with_capacity(length)
+        } else {
+            Vec::new()
+        };
 
-        if let Some(expected) = expected  {
+        while let Some(value) = seq.next_element_seed(self.0)? {
+            elements.push(value);
+        }
+
+        if let Some(expected) = expected {
             if elements.len() != expected {
-                return Err(A::Error::custom(format!("expected seq length = {}, actual = {} ", expected, elements.len())));
+                return Err(A::Error::custom(format!(
+                    "expected seq length = {}, actual = {} ",
+                    expected,
+                    elements.len()
+                )));
             }
         }
-        
+
         Ok(Value::Seq(elements))
     }
 }

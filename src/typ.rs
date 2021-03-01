@@ -1,10 +1,10 @@
+use indexmap::IndexMap;
 use std::cmp;
-use std::collections::{HashMap, hash_map};
+use std::collections::{hash_map, HashMap};
+use std::convert::TryFrom;
 use std::fmt;
 use std::hash;
 use std::ops::Index;
-use std::convert::TryFrom;
-use indexmap::IndexMap;
 
 use crate::err::InternalError;
 
@@ -86,7 +86,7 @@ impl TryFrom<&str> for PrimitiveType {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         Ok(match value {
             "bool" => PrimitiveType::Bool,
-            "i8" => PrimitiveType::I8, 
+            "i8" => PrimitiveType::I8,
             "i16" => PrimitiveType::I16,
             "i32" => PrimitiveType::I32,
             "i64" => PrimitiveType::I64,
@@ -103,7 +103,7 @@ impl TryFrom<&str> for PrimitiveType {
             "char" => PrimitiveType::Char,
             "[u8]" => PrimitiveType::ByteArray,
             "()" => PrimitiveType::Unit,
-            _ => return Err("value is not a basetype")
+            _ => return Err("value is not a basetype"),
         })
     }
 }
@@ -151,15 +151,19 @@ pub(crate) struct SubType<'a> {
 }
 
 impl<'a> SubType<'a> {
-    pub fn new(typ: &'a Type) -> Self
-    {
-	SubType{parts: &typ.parts, root: typ.root}
+    pub fn new(typ: &'a Type) -> Self {
+        SubType {
+            parts: &typ.parts,
+            root: typ.root,
+        }
     }
 
-    pub fn new_key(&self, k: TypeKey) -> Self
-    {
-	assert!(k < self.parts.len());
-	SubType{parts: self.parts, root: k}
+    pub fn new_key(&self, k: TypeKey) -> Self {
+        assert!(k < self.parts.len());
+        SubType {
+            parts: self.parts,
+            root: k,
+        }
     }
 
     pub fn name(&self) -> String {
@@ -170,7 +174,6 @@ impl<'a> SubType<'a> {
         &self.parts[self.root]
     }
 }
-
 
 impl<K, T> TypeDisplay<K, T> for K
 where
@@ -212,8 +215,6 @@ where
     }
 }
 
-
-
 // represents a data type of a symbol. The data type is always
 // monomorphized, because we are looking at compiled code, so types
 // cannot be generic.
@@ -239,14 +240,13 @@ impl fmt::Display for TypeVariant<String> {
 }
 
 pub struct Iter<'a, K: 'a>(hash_map::Keys<'a, K, TypeVariant<K>>)
-    where
+where
     K: BuilderKey,
     K: 'a;
 
-
 impl<'a, K> Iterator for Iter<'a, K>
-    where
-    K: BuilderKey
+where
+    K: BuilderKey,
 {
     type Item = &'a K;
 
@@ -260,9 +260,6 @@ impl<'a, K> Iterator for Iter<'a, K>
     }
 }
 
-
-
-
 pub struct TypeBuilder<K: Clone + fmt::Debug> {
     types: HashMap<K, TypeVariant<K>>,
 }
@@ -274,16 +271,15 @@ impl<K: BuilderKey> TypeBuilder<K> {
         }
     }
 
-    pub fn iter(&self) -> Iter<K>{
+    pub fn iter(&self) -> Iter<K> {
         Iter(self.types.keys())
     }
-    
-    
+
     // consume another type builder and add its types to ours
-    pub fn extend(&mut self, mut other:  TypeBuilder<K>) {
+    pub fn extend(&mut self, mut other: TypeBuilder<K>) {
         self.types.extend(other.types.drain());
     }
-    
+
     fn convert_variant<'a>(
         &'a self,
         typ: &'a Variant<K>,
@@ -293,21 +289,30 @@ impl<K: BuilderKey> TypeBuilder<K> {
         let v = match typ {
             Variant::Unit(name) => Variant::Unit(String::from(name)),
             Variant::NewType(name, k) => {
-                let inner_id = self.get_or_add(k, partial_type, visited).map_err(|e|e.extend(&format!("Could not add newtype {}", name)))?;
+                let inner_id = self
+                    .get_or_add(k, partial_type, visited)
+                    .map_err(|e| e.extend(&format!("Could not add newtype {}", name)))?;
                 Variant::NewType(String::from(name), inner_id)
             }
             Variant::Tuple(name, keys) => {
                 let mut new_keys = Vec::with_capacity(keys.len());
                 for k in keys {
-                    new_keys.push(self.get_or_add(k, partial_type, visited).map_err(|e|e.extend(&format!("could not make tuple variant {}", name)))?);
+                    new_keys.push(self.get_or_add(k, partial_type, visited).map_err(|e| {
+                        e.extend(&format!("could not make tuple variant {}", name))
+                    })?);
                 }
-                
+
                 Variant::Tuple(String::from(name), new_keys)
             }
             Variant::Struct(name, fields) => {
                 let mut new_fields = IndexMap::with_capacity(fields.len());
-                for (f,k) in fields {
-                    new_fields.insert(f.clone(), self.get_or_add(k, partial_type, visited).map_err(|e|e.extend(&format!("could not add  field {} of variant {}", f,name)))?);
+                for (f, k) in fields {
+                    new_fields.insert(
+                        f.clone(),
+                        self.get_or_add(k, partial_type, visited).map_err(|e| {
+                            e.extend(&format!("could not add  field {} of variant {}", f, name))
+                        })?,
+                    );
                 }
                 Variant::Struct(String::from(name), new_fields)
             }
@@ -323,7 +328,6 @@ impl<K: BuilderKey> TypeBuilder<K> {
         partial_type: &mut Vec<TypeVariant<TypeKey>>,
         visited: &mut HashMap<&'a K, TypeKey>,
     ) -> Result<TypeKey, InternalError> {
-
         // if we have already seen this data type, return its index
         if let Some(index) = visited.get(typ) {
             return Ok(*index);
@@ -357,8 +361,14 @@ impl<K: BuilderKey> TypeBuilder<K> {
             TypeVariant::Enum(name, variants) => {
                 let mut new_variants = Vec::with_capacity(variants.len());
                 for v in variants {
-                    new_variants.push(self.convert_variant(v, partial_type, visited)
-                                      .map_err(|e|e.extend(&format!("could not add one of the enum variants for {}", name)))?);
+                    new_variants.push(self.convert_variant(v, partial_type, visited).map_err(
+                        |e| {
+                            e.extend(&format!(
+                                "could not add one of the enum variants for {}",
+                                name
+                            ))
+                        },
+                    )?);
                 }
                 TypeVariant::Enum(String::from(name), new_variants)
             }
@@ -374,14 +384,21 @@ impl<K: BuilderKey> TypeBuilder<K> {
             TypeVariant::Tuple(types) => {
                 let mut new_types = Vec::with_capacity(types.len());
                 for k in types {
-                    new_types.push(self.get_or_add(k, partial_type, visited).map_err(|e|e.extend(&format!("Could not add element of tuple {:?}", variant)))?);
+                    new_types.push(self.get_or_add(k, partial_type, visited).map_err(|e| {
+                        e.extend(&format!("Could not add element of tuple {:?}", variant))
+                    })?);
                 }
                 TypeVariant::Tuple(new_types)
             }
             TypeVariant::TupleStruct(name, types) => {
                 let mut new_types = Vec::with_capacity(types.len());
-                for (i,k) in types.iter().enumerate() {
-                    new_types.push(self.get_or_add(k, partial_type, visited).map_err(|e|e.extend(&format!("Could not add element {} of tuple struct {}", i, name)))?);
+                for (i, k) in types.iter().enumerate() {
+                    new_types.push(self.get_or_add(k, partial_type, visited).map_err(|e| {
+                        e.extend(&format!(
+                            "Could not add element {} of tuple struct {}",
+                            i, name
+                        ))
+                    })?);
                 }
                 TypeVariant::TupleStruct(name.clone(), new_types)
             }
@@ -392,8 +409,13 @@ impl<K: BuilderKey> TypeBuilder<K> {
             }
             TypeVariant::Struct(name, fields) => {
                 let mut new_fields = IndexMap::with_capacity(fields.len());
-                for (f,k) in fields {
-                    new_fields.insert(f.clone(), self.get_or_add(k, partial_type, visited).map_err(|e|e.extend(&format!("Could not add field {} of struct {}", f, name)))?);
+                for (f, k) in fields {
+                    new_fields.insert(
+                        f.clone(),
+                        self.get_or_add(k, partial_type, visited).map_err(|e| {
+                            e.extend(&format!("Could not add field {} of struct {}", f, name))
+                        })?,
+                    );
                 }
 
                 TypeVariant::Struct(name.clone(), new_fields)
@@ -402,19 +424,20 @@ impl<K: BuilderKey> TypeBuilder<K> {
         Ok(idx)
     }
 
-    
-    
     // build a type from what is present here
     pub fn build(&self, root: K) -> Option<Type> {
         let mut parts = Vec::new();
         let mut visited = HashMap::new();
         match self.get_or_add(&root, &mut parts, &mut visited) {
             Ok(root) => Some(Type { parts, root }),
-            Err(e) => { eprintln!("{}",e); None }
+            Err(e) => {
+                eprintln!("{}", e);
+                None
+            }
         }
     }
 
-    pub fn add_prim<'a>(&'a mut self, k: K, p: PrimitiveType) -> &'a TypeBuilder<K> {        
+    pub fn add_prim<'a>(&'a mut self, k: K, p: PrimitiveType) -> &'a TypeBuilder<K> {
         self.types.insert(k, TypeVariant::Primitive(p));
         self
     }
@@ -425,7 +448,7 @@ impl<K: BuilderKey> TypeBuilder<K> {
     }
 
     pub fn add_unit_struct<'a>(&'a mut self, k: K, name: &str) -> &'a TypeBuilder<K> {
-        if ! self.types.contains_key(&k) {
+        if !self.types.contains_key(&k) {
             self.types
                 .insert(k, TypeVariant::UnitStruct(String::from(name)));
         }
@@ -438,7 +461,7 @@ impl<K: BuilderKey> TypeBuilder<K> {
         name: &str,
         variants: &Vec<Variant<K>>,
     ) -> &'a TypeBuilder<K> {
-        if ! self.types.contains_key(&k) {
+        if !self.types.contains_key(&k) {
             self.types
                 .insert(k, TypeVariant::Enum(String::from(name), variants.clone()));
         }
@@ -446,7 +469,7 @@ impl<K: BuilderKey> TypeBuilder<K> {
     }
 
     pub fn add_newtype<'a>(&'a mut self, k: K, name: &str, t: K) -> &'a TypeBuilder<K> {
-        if ! self.types.contains_key(&k) {
+        if !self.types.contains_key(&k) {
             self.types
                 .insert(k, TypeVariant::NewType(String::from(name), t));
         }
@@ -459,15 +482,20 @@ impl<K: BuilderKey> TypeBuilder<K> {
     }
 
     pub fn add_tuple<'a>(&'a mut self, key: K, types: &[K]) -> &'a TypeBuilder<K> {
-        if ! self.types.contains_key(&key) {
+        if !self.types.contains_key(&key) {
             let types = Vec::from(types);
             self.types.insert(key, TypeVariant::Tuple(types));
         }
         self
     }
 
-    pub fn add_tuple_struct<'a>(&'a mut self, key: K, name: &str, types: &[K]) -> &'a TypeBuilder<K> {
-        if ! self.types.contains_key(&key) {
+    pub fn add_tuple_struct<'a>(
+        &'a mut self,
+        key: K,
+        name: &str,
+        types: &[K],
+    ) -> &'a TypeBuilder<K> {
+        if !self.types.contains_key(&key) {
             let types = Vec::from(types);
             self.types
                 .insert(key, TypeVariant::TupleStruct(String::from(name), types));
@@ -486,7 +514,7 @@ impl<K: BuilderKey> TypeBuilder<K> {
         name: &str,
         fields: &IndexMap<String, K>,
     ) -> &'a TypeBuilder<K> {
-        if ! self.types.contains_key(&key) {
+        if !self.types.contains_key(&key) {
             self.types
                 .insert(key, TypeVariant::Struct(String::from(name), fields.clone()));
         }
@@ -501,7 +529,6 @@ impl<K: BuilderKey> TypeBuilder<K> {
         self.types.remove(&k).is_some()
     }
 
-    
     // escape hatch to add a raw type. Do we need this???
     fn add_type<'a>(&'a mut self, k: K, t: TypeVariant<K>) -> &'a TypeBuilder<K> {
         self.types.insert(k, t);

@@ -14,10 +14,10 @@ impl fmt::Display for InternalError {
 }
 
 impl InternalError {
-    pub fn new(msg:&str) -> Self {
+    pub fn new(msg: &str) -> Self {
         InternalError(String::from(msg), None)
     }
-    pub fn extend(self, msg:&str) -> Self {
+    pub fn extend(self, msg: &str) -> Self {
         InternalError(String::from(msg), Some(Box::from(self)))
     }
 }

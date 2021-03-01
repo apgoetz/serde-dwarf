@@ -1,11 +1,11 @@
 // tests that use serde_token
 //use serde_dwarf::{self, DebugInfoBuilder};
 
-use serde::{Deserialize};
+use serde::Deserialize;
 use std::collections::HashMap;
 
 mod common;
-use common::{Tokens, MockDeserializer};
+use common::{MockDeserializer, Tokens};
 
 macro_rules! assert_tokens {
     ($typ:ty, $tokens:expr, $magic:expr) => {
@@ -15,7 +15,7 @@ macro_rules! assert_tokens {
     };
     ($typ:ty, $tokens:expr) => {
         assert_tokens!($typ, $tokens, 0);
-    }
+    };
 }
 
 //use std::env;
@@ -44,7 +44,6 @@ fn test_primitive() {
     // on ALL platforms, isize/usize are 64 bit
     assert_tokens!(usize, [Tokens::U64]);
     assert_tokens!(isize, [Tokens::I64]);
-
 }
 
 #[test]
@@ -53,26 +52,28 @@ fn test_option() {
     assert_tokens!(Option<u8>, [Tokens::Option, Tokens::U8], 1);
 }
 
-
 #[test]
 fn test_string() {
-    use std::ffi::{CString, OsString, CStr};
+    use std::ffi::{CStr, CString, OsString};
     assert_tokens!(CString, [Tokens::ByteBuf]);
     assert_tokens!(Box<CStr>, [Tokens::ByteBuf]);
     assert_tokens!(Box<str>, [Tokens::String]);
 
-    assert_tokens!(OsString, [
-        Tokens::Enum("OsString", &["Unix", "Windows"]),
-        Tokens::NewTypeVariant("Unix"),
-        Tokens::Seq
-    ], 0);
+    assert_tokens!(
+        OsString,
+        [
+            Tokens::Enum("OsString", &["Unix", "Windows"]),
+            Tokens::NewTypeVariant("Unix"),
+            Tokens::Seq
+        ],
+        0
+    );
 
     // assert_tokens!(OsString, [
     //     Tokens::Enum("OsString", &["Unix", "Windows"]),
     //     Tokens::NewTypeVariant("Windows"),
     //     Tokens::Seq
     // ], 1);
-
 }
 #[test]
 fn test_cmp() {
@@ -88,8 +89,7 @@ fn test_marker() {
 
 #[test]
 fn test_seq_collections() {
-    use std::collections::{BinaryHeap, BTreeSet, LinkedList,
-                           HashSet, VecDeque};
+    use std::collections::{BTreeSet, BinaryHeap, HashSet, LinkedList, VecDeque};
     assert_tokens!(BinaryHeap<u8>, [Tokens::Seq]);
     assert_tokens!(BTreeSet<u8>, [Tokens::Seq]);
     assert_tokens!(LinkedList<u8>, [Tokens::Seq]);
@@ -108,78 +108,165 @@ fn test_map_collections() {
 #[test]
 fn test_ip_addr() {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-    assert_tokens!(IpAddr,  [
-        Tokens::Enum("IpAddr", &["V4", "V6"]),
-        Tokens::NewTypeVariant("V4"),
-        Tokens::Tuple(4),
-        Tokens::U8,
-        Tokens::U8,
-        Tokens::U8,
-        Tokens::U8], 0);
+    assert_tokens!(
+        IpAddr,
+        [
+            Tokens::Enum("IpAddr", &["V4", "V6"]),
+            Tokens::NewTypeVariant("V4"),
+            Tokens::Tuple(4),
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8
+        ],
+        0
+    );
 
-    assert_tokens!(IpAddr,  [
-        Tokens::Enum("IpAddr", &["V4", "V6"]),
-        Tokens::NewTypeVariant("V6"),
-        Tokens::Tuple(16),
-        Tokens::U8, Tokens::U8, Tokens::U8, Tokens::U8,
-        Tokens::U8, Tokens::U8, Tokens::U8, Tokens::U8,
-        Tokens::U8, Tokens::U8, Tokens::U8, Tokens::U8,
-        Tokens::U8, Tokens::U8, Tokens::U8, Tokens::U8,], 1);
-    
-    assert_tokens!(Ipv4Addr,  [
-        Tokens::Tuple(4),
-        Tokens::U8,
-        Tokens::U8,
-        Tokens::U8,
-        Tokens::U8]);
+    assert_tokens!(
+        IpAddr,
+        [
+            Tokens::Enum("IpAddr", &["V4", "V6"]),
+            Tokens::NewTypeVariant("V6"),
+            Tokens::Tuple(16),
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+        ],
+        1
+    );
 
-    assert_tokens!(Ipv6Addr,  [
-        Tokens::Tuple(16),
-        Tokens::U8, Tokens::U8, Tokens::U8, Tokens::U8,
-        Tokens::U8, Tokens::U8, Tokens::U8, Tokens::U8,
-        Tokens::U8, Tokens::U8, Tokens::U8, Tokens::U8,
-        Tokens::U8, Tokens::U8, Tokens::U8, Tokens::U8,]);
+    assert_tokens!(
+        Ipv4Addr,
+        [
+            Tokens::Tuple(4),
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8
+        ]
+    );
 
+    assert_tokens!(
+        Ipv6Addr,
+        [
+            Tokens::Tuple(16),
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+        ]
+    );
 }
 
 #[test]
 fn test_socket_addr() {
     use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
-    assert_tokens!(SocketAddr,  [
-        Tokens::Enum("SocketAddr", &["V4", "V6"]),
-        Tokens::NewTypeVariant("V4"),
-        Tokens::Tuple(2),
-        Tokens::Tuple(4),
-        Tokens::U8, Tokens::U8, Tokens::U8, Tokens::U8,
-        Tokens::U16], 0);
+    assert_tokens!(
+        SocketAddr,
+        [
+            Tokens::Enum("SocketAddr", &["V4", "V6"]),
+            Tokens::NewTypeVariant("V4"),
+            Tokens::Tuple(2),
+            Tokens::Tuple(4),
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U16
+        ],
+        0
+    );
 
-    assert_tokens!(SocketAddr,  [
-        Tokens::Enum("SocketAddr", &["V4", "V6"]),
-        Tokens::NewTypeVariant("V6"),
-        Tokens::Tuple(2),
-        Tokens::Tuple(16),
-        Tokens::U8, Tokens::U8, Tokens::U8, Tokens::U8,
-        Tokens::U8, Tokens::U8, Tokens::U8, Tokens::U8,
-        Tokens::U8, Tokens::U8, Tokens::U8, Tokens::U8,
-        Tokens::U8, Tokens::U8, Tokens::U8, Tokens::U8,
-        Tokens::U16], 1);
+    assert_tokens!(
+        SocketAddr,
+        [
+            Tokens::Enum("SocketAddr", &["V4", "V6"]),
+            Tokens::NewTypeVariant("V6"),
+            Tokens::Tuple(2),
+            Tokens::Tuple(16),
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U16
+        ],
+        1
+    );
 
-    assert_tokens!(SocketAddrV4,  [
-        Tokens::Tuple(2),
-        Tokens::Tuple(4),
-        Tokens::U8, Tokens::U8, Tokens::U8, Tokens::U8,
-        Tokens::U16, ]);
+    assert_tokens!(
+        SocketAddrV4,
+        [
+            Tokens::Tuple(2),
+            Tokens::Tuple(4),
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U16,
+        ]
+    );
 
-    assert_tokens!(SocketAddrV6,  [
-        Tokens::Tuple(2),
-        Tokens::Tuple(16),
-        Tokens::U8, Tokens::U8, Tokens::U8, Tokens::U8,
-        Tokens::U8, Tokens::U8, Tokens::U8, Tokens::U8,
-        Tokens::U8, Tokens::U8, Tokens::U8, Tokens::U8,
-        Tokens::U8, Tokens::U8, Tokens::U8, Tokens::U8,
-        Tokens::U16]);
-
-    
+    assert_tokens!(
+        SocketAddrV6,
+        [
+            Tokens::Tuple(2),
+            Tokens::Tuple(16),
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U8,
+            Tokens::U16
+        ]
+    );
 }
 
 #[test]
@@ -202,7 +289,6 @@ fn test_smart_pointers() {
     assert_tokens!(rc::Weak<u8>, [Tokens::Option], 0);
     assert_tokens!(rc::Weak<u8>, [Tokens::Option, Tokens::U8], 1);
 
-    
     assert_tokens!(Box<bool>, [Tokens::Bool]);
     assert_tokens!(Box<[bool]>, [Tokens::Seq]);
 
@@ -220,57 +306,79 @@ fn test_sync() {
     assert_tokens!(Mutex<bool>, [Tokens::Bool]);
 
     assert_tokens!(RwLock<bool>, [Tokens::Bool]);
-
 }
 
 #[test]
 fn test_time() {
     use std::time::{Duration, SystemTime};
-    assert_tokens!(Duration, [
-        Tokens::Struct("Duration", &["secs", "nanos"]),
-        Tokens::U64,
-        Tokens::U32,
-    ]);
+    assert_tokens!(
+        Duration,
+        [
+            Tokens::Struct("Duration", &["secs", "nanos"]),
+            Tokens::U64,
+            Tokens::U32,
+        ]
+    );
 
-    assert_tokens!(SystemTime, [
-        Tokens::Struct("SystemTime", &["secs_since_epoch", "nanos_since_epoch"]),
-        Tokens::U64,
-        Tokens::U32,
-    ]);
+    assert_tokens!(
+        SystemTime,
+        [
+            Tokens::Struct("SystemTime", &["secs_since_epoch", "nanos_since_epoch"]),
+            Tokens::U64,
+            Tokens::U32,
+        ]
+    );
 }
 
 #[test]
 fn test_ops() {
-    use std::ops::{Range, RangeInclusive, Bound};
-    assert_tokens!(Range<u8>, [
-        Tokens::Struct("Range", &["start", "end"]),
-        Tokens::U8,
-        Tokens::U8,
-    ]);
+    use std::ops::{Bound, Range, RangeInclusive};
+    assert_tokens!(
+        Range<u8>,
+        [
+            Tokens::Struct("Range", &["start", "end"]),
+            Tokens::U8,
+            Tokens::U8,
+        ]
+    );
 
-    assert_tokens!(RangeInclusive<u8>, [
-        Tokens::Struct("RangeInclusive", &["start", "end"]),
-        Tokens::U8,
-        Tokens::U8,
-    ]);
+    assert_tokens!(
+        RangeInclusive<u8>,
+        [
+            Tokens::Struct("RangeInclusive", &["start", "end"]),
+            Tokens::U8,
+            Tokens::U8,
+        ]
+    );
 
+    assert_tokens!(
+        Bound<u8>,
+        [
+            Tokens::Enum("Bound", &["Unbounded", "Included", "Excluded"]),
+            Tokens::UnitVariant("Unbounded"),
+        ],
+        0
+    );
 
-    assert_tokens!(Bound<u8>, [
-        Tokens::Enum("Bound", &["Unbounded", "Included", "Excluded"]),
-        Tokens::UnitVariant("Unbounded"),
-    ], 0);
+    assert_tokens!(
+        Bound<u8>,
+        [
+            Tokens::Enum("Bound", &["Unbounded", "Included", "Excluded"]),
+            Tokens::NewTypeVariant("Included"),
+            Tokens::U8,
+        ],
+        1
+    );
 
-    assert_tokens!(Bound<u8>, [
-        Tokens::Enum("Bound", &["Unbounded", "Included", "Excluded"]),
-        Tokens::NewTypeVariant("Included"),
-        Tokens::U8,
-        ], 1);
-
-    assert_tokens!(Bound<u8>, [
-        Tokens::Enum("Bound", &["Unbounded", "Included", "Excluded"]),
-        Tokens::NewTypeVariant("Excluded"),
-        Tokens::U8,
-    ], 2);
+    assert_tokens!(
+        Bound<u8>,
+        [
+            Tokens::Enum("Bound", &["Unbounded", "Included", "Excluded"]),
+            Tokens::NewTypeVariant("Excluded"),
+            Tokens::U8,
+        ],
+        2
+    );
 }
 
 #[test]
@@ -278,7 +386,6 @@ fn test_ops() {
 fn test_nonzero_panics() {
     use std::num;
     assert_tokens!(num::NonZeroU8, [Tokens::U8]);
-    
 }
 
 #[test]
@@ -291,14 +398,12 @@ fn test_num() {
     assert_tokens!(num::NonZeroUsize, [Tokens::U64], 1);
     assert_tokens!(num::NonZeroU128, [Tokens::U128], 1);
 
-    
     assert_tokens!(num::NonZeroI8, [Tokens::I8], 1);
     assert_tokens!(num::NonZeroI16, [Tokens::I16], 1);
     assert_tokens!(num::NonZeroI32, [Tokens::I32], 1);
     assert_tokens!(num::NonZeroI64, [Tokens::I64], 1);
     assert_tokens!(num::NonZeroIsize, [Tokens::I64], 1);
     assert_tokens!(num::NonZeroI128, [Tokens::I128], 1);
-    
 }
 
 #[test]
@@ -311,54 +416,46 @@ fn test_unit_struct() {
 
 #[test]
 fn test_newtype_struct() {
-
     #[derive(Deserialize)]
     struct Foo(u8);
     assert_tokens!(Foo, [Tokens::NewTypeStruct("Foo"), Tokens::U8]);
 
-
     // test that worlds stupidest linked list works
     #[derive(Deserialize)]
     struct List(Option<Box<List>>);
-    assert_tokens!(List, [
-        Tokens::NewTypeStruct("List"),
-        Tokens::Option,
-    ], 0);
+    assert_tokens!(List, [Tokens::NewTypeStruct("List"), Tokens::Option,], 0);
 
-    
-    assert_tokens!(List, [
-        Tokens::NewTypeStruct("List"),
-        Tokens::Option,
-        Tokens::NewTypeStruct("List"),
-        Tokens::Option,
-    ], 1);
-
-    
+    assert_tokens!(
+        List,
+        [
+            Tokens::NewTypeStruct("List"),
+            Tokens::Option,
+            Tokens::NewTypeStruct("List"),
+            Tokens::Option,
+        ],
+        1
+    );
 }
 
 #[test]
 fn test_tuple() {
-    assert_tokens!((u8,u16), [Tokens::Tuple(2), Tokens::U8, Tokens::U16]);
+    assert_tokens!((u8, u16), [Tokens::Tuple(2), Tokens::U8, Tokens::U16]);
 }
-
 
 #[test]
 fn test_seq() {
     assert_tokens!(Vec<u16>, [Tokens::Seq]);
-    assert_tokens!(Vec<u16>, [
-        Tokens::Seq,
-        Tokens::U16,
-        Tokens::U16,
-    ], 2);
+    assert_tokens!(Vec<u16>, [Tokens::Seq, Tokens::U16, Tokens::U16,], 2);
 }
 
 #[test]
 fn test_tuple_struct() {
     #[derive(Deserialize)]
-    struct Foo(u8,u16);
-    assert_tokens!(Foo, [Tokens::TupleStruct("Foo",2),
-                         Tokens::U8,
-                         Tokens::U16]);
+    struct Foo(u8, u16);
+    assert_tokens!(
+        Foo,
+        [Tokens::TupleStruct("Foo", 2), Tokens::U8, Tokens::U16]
+    );
 }
 
 #[test]
@@ -377,14 +474,17 @@ fn test_map() {
 fn test_struct() {
     #[derive(Deserialize)]
     struct Foo {
-        _a: u8, 
+        _a: u8,
         _b: u16,
     }
-    assert_tokens!(Foo, [
-        Tokens::Struct("Foo", &["_a", "_b"]),
-        Tokens::U8,
-        Tokens::U16,
-    ]);
+    assert_tokens!(
+        Foo,
+        [
+            Tokens::Struct("Foo", &["_a", "_b"]),
+            Tokens::U8,
+            Tokens::U16,
+        ]
+    );
 }
 
 #[test]
@@ -393,33 +493,47 @@ fn test_enum() {
     enum Foo {
         A,
         B(u8),
-        C(u8,u16),
-        D {
-            _a: u32
-        }
+        C(u8, u16),
+        D { _a: u32 },
     }
 
-    assert_tokens!(Foo, [
-        Tokens::Enum("Foo", &["A", "B", "C", "D"]),
-        Tokens::UnitVariant("A")
-    ], 0);
+    assert_tokens!(
+        Foo,
+        [
+            Tokens::Enum("Foo", &["A", "B", "C", "D"]),
+            Tokens::UnitVariant("A")
+        ],
+        0
+    );
 
-    assert_tokens!(Foo, [
-        Tokens::Enum("Foo", &["A", "B", "C", "D"]),
-        Tokens::NewTypeVariant("B"),
-        Tokens::U8
-    ], 1);
+    assert_tokens!(
+        Foo,
+        [
+            Tokens::Enum("Foo", &["A", "B", "C", "D"]),
+            Tokens::NewTypeVariant("B"),
+            Tokens::U8
+        ],
+        1
+    );
 
-    assert_tokens!(Foo, [
-        Tokens::Enum("Foo", &["A", "B", "C", "D"]),
-        Tokens::TupleVariant("C", 2),
-        Tokens::U8,
-        Tokens::U16
-    ], 2);
+    assert_tokens!(
+        Foo,
+        [
+            Tokens::Enum("Foo", &["A", "B", "C", "D"]),
+            Tokens::TupleVariant("C", 2),
+            Tokens::U8,
+            Tokens::U16
+        ],
+        2
+    );
 
-    assert_tokens!(Foo, [
-        Tokens::Enum("Foo", &["A", "B", "C", "D"]),
-        Tokens::StructVariant("D", &["_a"]),
-        Tokens::U32,
-    ], 3);
+    assert_tokens!(
+        Foo,
+        [
+            Tokens::Enum("Foo", &["A", "B", "C", "D"]),
+            Tokens::StructVariant("D", &["_a"]),
+            Tokens::U32,
+        ],
+        3
+    );
 }

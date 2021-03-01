@@ -1,17 +1,15 @@
-use crate::{DebugInfo, DebugInfoBuilder, Error, ErrorCode, ErrorImpl, Filter, Result};
-use crate::typ;
 use crate::entry_parser::UnitResults;
+use crate::typ;
+use crate::{DebugInfo, DebugInfoBuilder, Error, ErrorCode, ErrorImpl, Filter, Result};
+use fallible_iterator::FallibleIterator;
 use gimli::{self, constants};
 use object::{self, Object, ObjectSection};
+use rayon::prelude::*;
 use rustc_demangle::demangle;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::io;
 use std::result;
 use std::sync;
-use std::io;
-use fallible_iterator::FallibleIterator;
-use rayon::prelude::*;
-
-
 
 pub type Reader<'i> = gimli::EndianSlice<'i, gimli::RunTimeEndian>;
 pub type UnitOffset<'i> = gimli::UnitOffset<<Reader<'i> as gimli::Reader>::Offset>;
@@ -71,7 +69,6 @@ impl<'i> DebugInfoParser<'i> {
 
     // do all the work to make the debuginfo parser
     pub fn parse(&self) -> Result<DebugInfo> {
-
         // vector of all units to work on
         let units = self
             .dwarf
@@ -101,39 +98,42 @@ impl<'i> DebugInfoParser<'i> {
             .filter_map(|o| results.subfunction_to_self(*o))
             .collect::<HashSet<_>>();
 
-
-        
         let mut builder = typ::TypeBuilder::new();
-        results
-            .serialize_types
-            .iter()
-            .for_each(|o| results.add_type(&mut builder, *o).map_or_else(|e| eprintln!("{}",e), |_|()));
+        results.serialize_types.iter().for_each(|o| {
+            results
+                .add_type(&mut builder, *o)
+                .map_or_else(|e| eprintln!("{}", e), |_| ())
+        });
 
-        results
-            .symbol_types
-            .values()
-            .for_each(|o| results.add_type(&mut builder, *o).map_or_else(|e| eprintln!("{}",e), |_|()));
+        results.symbol_types.values().for_each(|o| {
+            results
+                .add_type(&mut builder, *o)
+                .map_or_else(|e| eprintln!("{}", e), |_| ())
+        });
 
         let types = builder
             .iter()
-            .filter_map(|o| results.get_typename(*o).map(|n|(n, *o)))
-            .collect::<HashMap<String,gimli::DebugInfoOffset>>();
-
+            .filter_map(|o| results.get_typename(*o).map(|n| (n, *o)))
+            .collect::<HashMap<String, gimli::DebugInfoOffset>>();
 
         let syms = results
             .symbol_types
             .iter()
-            .map(|(k,v)| (String::from(*k), *v))
-            .collect::<HashMap<String,gimli::DebugInfoOffset>>();
+            .map(|(k, v)| (String::from(*k), *v))
+            .collect::<HashMap<String, gimli::DebugInfoOffset>>();
 
         let symtypes = results
             .symbol_types
             .iter()
-            .filter_map(|(k,v)| results.get_typename(*v).map(|n|(String::from(*k), n)))
+            .filter_map(|(k, v)| results.get_typename(*v).map(|n| (String::from(*k), n)))
             .collect::<HashMap<String, String>>();
 
-        
-        Ok(DebugInfo {types, syms, symtypes, builder})
+        Ok(DebugInfo {
+            types,
+            syms,
+            symtypes,
+            builder,
+        })
     }
 
     // helper debug functions to print info for a die
@@ -143,41 +143,43 @@ impl<'i> DebugInfoParser<'i> {
         depth: usize,
         entry: &gimli::DebuggingInformationEntry<Reader>,
     ) -> result::Result<(), gimli::Error> {
-        let padding = "  ".repeat(2 * depth + 1 );
+        let padding = "  ".repeat(2 * depth + 1);
         let tag_padding = "  ".repeat(2 * depth as usize);
-        writeln!(f,
+        writeln!(
+            f,
             "{}<{}>{}",
             tag_padding,
             depth,
             entry.tag().static_string().unwrap()
-        ).ok();
+        )
+        .ok();
 
         let mut attrs = entry.attrs();
 
         while let Some(attr) = attrs.next()? {
-            write!(f,"{}", padding).ok();
+            write!(f, "{}", padding).ok();
 
             if let Some(n) = attr.name().static_string() {
-                write!(f,"{}: ", n).ok();
+                write!(f, "{}: ", n).ok();
             } else {
-                write!(f,"{:27}: ", attr.name()).ok();
+                write!(f, "{:27}: ", attr.name()).ok();
             }
 
             if let gimli::AttributeValue::DebugStrRef(offset) = attr.value() {
                 let string = self.dwarf.debug_str.get_str(offset)?;
                 let string = demangle(string.to_string()?).to_string();
-                writeln!(f,"{}", string).ok();
+                writeln!(f, "{}", string).ok();
             } else if let Some(num) = attr.udata_value() {
-                writeln!(f,"{}", num).ok();
+                writeln!(f, "{}", num).ok();
             } else if let gimli::AttributeValue::UnitRef(offset) = attr.value() {
-                writeln!(f,"unit+{:#010x}", offset.0).ok();
+                writeln!(f, "unit+{:#010x}", offset.0).ok();
             } else {
-                writeln!(f,"??? {:#?}", attr.value()).ok();
+                writeln!(f, "??? {:#?}", attr.value()).ok();
             }
         }
         Ok(())
     }
-    
+
     pub fn get_str_val(
         &self,
         entry: &gimli::DebuggingInformationEntry<Reader>,
@@ -204,7 +206,6 @@ impl<'i> DebugInfoParser<'i> {
             _ => false,
         }
     }
-
 }
 
 #[derive(Debug)]
@@ -349,7 +350,10 @@ impl<'i> UnitParser<'i> {
 }
 
 // convert a unit offset into a debug info offset
-pub fn unit_to_di(unit: &gimli::Unit<Reader>, offset: UnitOffset) -> Option<gimli::DebugInfoOffset> {
+pub fn unit_to_di(
+    unit: &gimli::Unit<Reader>,
+    offset: UnitOffset,
+) -> Option<gimli::DebugInfoOffset> {
     offset.to_debug_info_offset(&unit.header)
 }
 
@@ -378,7 +382,7 @@ pub fn get_type(
 }
 
 // get the length of an array
-pub fn get_array_length(unit: &gimli::Unit<Reader>, offset: UnitOffset) -> Option<u64>{
+pub fn get_array_length(unit: &gimli::Unit<Reader>, offset: UnitOffset) -> Option<u64> {
     // build a cursor pointing at the array type
     let mut cursor = unit.entries_at_offset(offset).ok()?;
     // move cursor to this element
@@ -389,7 +393,7 @@ pub fn get_array_length(unit: &gimli::Unit<Reader>, offset: UnitOffset) -> Optio
         // if we did not move directly to our own child:
         if delta_depth != 1 {
             None
-            //Err(Error::ParseError("depth of next element not equal to 1".to_string()))
+        //Err(Error::ParseError("depth of next element not equal to 1".to_string()))
         } else {
             let has_attr = entry.attr(constants::DW_AT_count).ok()?;
             if let Some(attr) = has_attr {
