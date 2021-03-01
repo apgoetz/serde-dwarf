@@ -237,8 +237,10 @@ impl<'i> UnitResults<'i> {
             if depth <= 0 {
                 break;
             }
-            field_names.push(self.di_parser.get_str_val(&entry, constants::DW_AT_name).ok()??);
-            field_vals.push(get_type(unit, &entry).ok()?);
+            if entry.tag() == constants::DW_TAG_member {
+                field_names.push(self.di_parser.get_str_val(&entry, constants::DW_AT_name).ok()??);
+                field_vals.push(get_type(unit, &entry).ok()?);
+            }
         }
         Some((field_names, field_vals))
     }

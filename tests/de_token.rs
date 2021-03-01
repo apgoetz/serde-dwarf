@@ -184,3 +184,10 @@ fn test_seq() {
     assert_deserialize!(test_seq_1, Vec<u16>, 1);
     assert_deserialize!(test_seq_2, Vec<u16>, 2);
 }
+
+#[test]
+fn test_generic_struct() {
+    #[derive(Deserialize)]
+    struct Foo<T>(T);
+    assert_deserialize!(test_generic_struct, Foo<u16>, 2);
+}
