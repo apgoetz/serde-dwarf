@@ -102,6 +102,7 @@ mod parser;
 mod entry_parser;
 mod typ;
 mod de;
+mod err;
 pub use typ::Type;
 #[derive(Debug)]
 enum ErrorCode {

@@ -6,6 +6,8 @@ use std::ops::Index;
 use std::convert::TryFrom;
 use indexmap::IndexMap;
 
+use crate::err::InternalError;
+
 type VariantIndex = u32;
 pub trait BuilderKey: fmt::Debug + Clone + Send + Sync + cmp::Eq + hash::Hash {}
 
@@ -287,43 +289,30 @@ impl<K: BuilderKey> TypeBuilder<K> {
         typ: &'a Variant<K>,
         partial_type: &mut Vec<TypeVariant<TypeKey>>,
         visited: &mut HashMap<&'a K, TypeKey>,
-    ) -> Option<Variant<TypeKey>> {
+    ) -> Result<Variant<TypeKey>, InternalError> {
         let v = match typ {
             Variant::Unit(name) => Variant::Unit(String::from(name)),
             Variant::NewType(name, k) => {
-                let inner_id = self.get_or_add(k, partial_type, visited)?;
+                let inner_id = self.get_or_add(k, partial_type, visited).map_err(|e|e.extend(&format!("Could not add newtype {}", name)))?;
                 Variant::NewType(String::from(name), inner_id)
             }
             Variant::Tuple(name, keys) => {
-                let orig_len = keys.len();
-                let keys = keys
-                    .iter()
-                    .filter_map(|k| self.get_or_add(k, partial_type, visited))
-                    .collect::<Vec<_>>();
-                if orig_len != keys.len() {
-                    return None;
+                let mut new_keys = Vec::with_capacity(keys.len());
+                for k in keys {
+                    new_keys.push(self.get_or_add(k, partial_type, visited).map_err(|e|e.extend(&format!("could not make tuple variant {}", name)))?);
                 }
-                Variant::Tuple(String::from(name), keys)
+                
+                Variant::Tuple(String::from(name), new_keys)
             }
             Variant::Struct(name, fields) => {
-                let orig_len = fields.len();
-                let fields = fields
-                    .iter()
-                    .filter_map(|(f, k)| {
-                        if let Some(k) = self.get_or_add(k, partial_type, visited) {
-                            Some((f.clone(), k))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<IndexMap<_, _>>();
-                if orig_len != fields.len() {
-                    return None;
+                let mut new_fields = IndexMap::with_capacity(fields.len());
+                for (f,k) in fields {
+                    new_fields.insert(f.clone(), self.get_or_add(k, partial_type, visited).map_err(|e|e.extend(&format!("could not add  field {} of variant {}", f,name)))?);
                 }
-                Variant::Struct(String::from(name), fields)
+                Variant::Struct(String::from(name), new_fields)
             }
         };
-        Some(v)
+        Ok(v)
     }
 
     // gets the index of a type in the vec, or adds it if it doesnt exist
@@ -333,14 +322,19 @@ impl<K: BuilderKey> TypeBuilder<K> {
         typ: &'a K,
         partial_type: &mut Vec<TypeVariant<TypeKey>>,
         visited: &mut HashMap<&'a K, TypeKey>,
-    ) -> Option<TypeKey> {
+    ) -> Result<TypeKey, InternalError> {
+
         // if we have already seen this data type, return its index
         if let Some(index) = visited.get(typ) {
-            return Some(*index);
+            return Ok(*index);
         }
         // otherwise, we need to add it
         // TODO, fix panic with error code
-        let variant = self.types.get(typ)?;
+        let variant = if let Some(v) = self.types.get(typ) {
+            v
+        } else {
+            return Err(InternalError::new(&format!("key not in types: {:?}", typ)));
+        };
 
         // we dont know if this is a recursive type, so we
         // need to insert this type before we reference the
@@ -361,15 +355,12 @@ impl<K: BuilderKey> TypeBuilder<K> {
             }
             TypeVariant::UnitStruct(name) => TypeVariant::UnitStruct(name.clone()),
             TypeVariant::Enum(name, variants) => {
-                let orig_len = variants.len();
-                let variants = variants
-                    .iter()
-                    .filter_map(|v| self.convert_variant(v, partial_type, visited))
-                    .collect::<Vec<_>>();
-                if orig_len != variants.len() {
-                    return None;
+                let mut new_variants = Vec::with_capacity(variants.len());
+                for v in variants {
+                    new_variants.push(self.convert_variant(v, partial_type, visited)
+                                      .map_err(|e|e.extend(&format!("could not add one of the enum variants for {}", name)))?);
                 }
-                TypeVariant::Enum(String::from(name), variants)
+                TypeVariant::Enum(String::from(name), new_variants)
             }
             TypeVariant::NewType(name, tref) => {
                 let inner_ref = self.get_or_add(&tref, partial_type, visited)?;
@@ -381,26 +372,18 @@ impl<K: BuilderKey> TypeBuilder<K> {
                 TypeVariant::Seq(inner_ref, *len)
             }
             TypeVariant::Tuple(types) => {
-                let orig_len = types.len();
-                let types = types
-                    .iter()
-                    .filter_map(|k| self.get_or_add(k, partial_type, visited))
-                    .collect::<Vec<_>>();
-                if orig_len != types.len() {
-                    return None;
+                let mut new_types = Vec::with_capacity(types.len());
+                for k in types {
+                    new_types.push(self.get_or_add(k, partial_type, visited).map_err(|e|e.extend(&format!("Could not add element of tuple {:?}", variant)))?);
                 }
-                TypeVariant::Tuple(types)
+                TypeVariant::Tuple(new_types)
             }
             TypeVariant::TupleStruct(name, types) => {
-                let orig_len = types.len();
-                let types = types
-                    .iter()
-                    .filter_map(|k| self.get_or_add(k, partial_type, visited))
-                    .collect::<Vec<_>>();
-                if orig_len != types.len() {
-                    return None;
+                let mut new_types = Vec::with_capacity(types.len());
+                for (i,k) in types.iter().enumerate() {
+                    new_types.push(self.get_or_add(k, partial_type, visited).map_err(|e|e.extend(&format!("Could not add element {} of tuple struct {}", i, name)))?);
                 }
-                TypeVariant::TupleStruct(name.clone(), types)
+                TypeVariant::TupleStruct(name.clone(), new_types)
             }
             TypeVariant::Map(key, val, len) => {
                 let key = self.get_or_add(key, partial_type, visited)?;
@@ -408,24 +391,15 @@ impl<K: BuilderKey> TypeBuilder<K> {
                 TypeVariant::Map(key, val, *len)
             }
             TypeVariant::Struct(name, fields) => {
-                let orig_len = fields.len();
-                let fields = fields
-                    .iter()
-                    .filter_map(|(f, k)| {
-                        if let Some(k) = self.get_or_add(k, partial_type, visited) {
-                            Some((f.clone(), k))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<IndexMap<_, _>>();
-                if orig_len != fields.len() {
-                    return None;
+                let mut new_fields = IndexMap::with_capacity(fields.len());
+                for (f,k) in fields {
+                    new_fields.insert(f.clone(), self.get_or_add(k, partial_type, visited).map_err(|e|e.extend(&format!("Could not add field {} of struct {}", f, name)))?);
                 }
-                TypeVariant::Struct(name.clone(), fields)
+
+                TypeVariant::Struct(name.clone(), new_fields)
             }
         };
-        Some(idx)
+        Ok(idx)
     }
 
     
@@ -434,8 +408,10 @@ impl<K: BuilderKey> TypeBuilder<K> {
     pub fn build(&self, root: K) -> Option<Type> {
         let mut parts = Vec::new();
         let mut visited = HashMap::new();
-        let root = self.get_or_add(&root, &mut parts, &mut visited)?;
-        Some(Type { parts, root })
+        match self.get_or_add(&root, &mut parts, &mut visited) {
+            Ok(root) => Some(Type { parts, root }),
+            Err(e) => { eprintln!("{}",e); None }
+        }
     }
 
     pub fn add_prim<'a>(&'a mut self, k: K, p: PrimitiveType) -> &'a TypeBuilder<K> {        

@@ -423,5 +423,3 @@ fn test_enum() {
         Tokens::U32,
     ], 3);
 }
-
-

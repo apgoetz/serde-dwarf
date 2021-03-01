@@ -5,6 +5,7 @@ use indexmap::IndexMap;
 
 use crate::typ::{Type, SubType, TypeKey, PrimitiveType};
 use crate::Value;
+// TODO: use a better name :(
 use crate::Variant as ValVariant;
 use crate::typ::TypeVariant as TV;
 use crate::typ::Variant;

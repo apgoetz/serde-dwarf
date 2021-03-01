@@ -106,12 +106,12 @@ impl<'i> DebugInfoParser<'i> {
         results
             .serialize_types
             .iter()
-            .for_each(|o| results.add_type(&mut builder, *o).unwrap_or(()));
+            .for_each(|o| results.add_type(&mut builder, *o).map_or_else(|e| eprintln!("{}",e), |_|()));
 
         results
             .symbol_types
             .values()
-            .for_each(|o| results.add_type(&mut builder, *o).unwrap_or(()));
+            .for_each(|o| results.add_type(&mut builder, *o).map_or_else(|e| eprintln!("{}",e), |_|()));
 
         let types = builder
             .iter()
