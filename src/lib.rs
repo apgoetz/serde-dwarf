@@ -218,7 +218,8 @@ pub enum Value {
     NewType(String, Box<Value>),
     TupleStruct(String, Vec<Value>),
     Struct(String, Vec<(String, Value)>),
-    Enum(String, Variant)
+    Enum(String, Variant),
+    Seq(Vec<Value>)
 }
 #[derive(Debug)]
 pub enum Variant {

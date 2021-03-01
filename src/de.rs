@@ -2,7 +2,6 @@ use serde::de::{Deserialize,DeserializeSeed, Deserializer, Visitor, SeqAccess, E
 use serde::de::Error as SerdeError;
 use std::fmt;
 use indexmap::IndexMap;
-
 use crate::typ::{Type, SubType, TypeKey, PrimitiveType};
 use crate::Value;
 // TODO: use a better name :(
@@ -33,8 +32,18 @@ impl<'de> DeserializeSeed<'de> for Type
     }
 }
 
+impl<'a,'de> DeserializeSeed<'de> for &SubType<'a> {
+    type Value = Value;
 
-impl<'a, 'de> DeserializeSeed<'de> for SubType<'a>
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        (*self).clone().deserialize(deserializer)
+    }
+}
+
+impl<'a,'de> DeserializeSeed<'de> for SubType<'a>
 {
     // The return type of the `deserialize` method. This implementation
     // appends onto an existing vector but does not create any new data
@@ -92,6 +101,7 @@ impl<'a, 'de> DeserializeSeed<'de> for SubType<'a>
                 }
                 deserializer.deserialize_enum("", &FIELD_SLICE[0..i], EnumVisitor(&self, variants))
             }
+            TV::Seq(k, len) => deserializer.deserialize_seq(SeqVisitor(&self.new_key(*k), *len)),
 	    _ => todo!()
 	}
     }
@@ -335,5 +345,49 @@ impl<'a, 'de> Visitor<'de> for EnumVisitor<'a> {
                 vaccess.tuple_variant(fields.len(), TupleVisitor(self.0, types, StructVariantMarker(self.0.name(), name.to_string(), fields)))
             }
         }
+    }
+}
+
+// used for seqs
+struct SeqVisitor<'a>(&'a SubType<'a>, Option<usize>);
+
+impl<'a, 'de> Visitor<'de> for SeqVisitor<'a> {
+    type Value = Value;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+	formatter.write_str("a seq")
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error> 
+	where A: SeqAccess<'de>
+    {
+        // check that the bounds from the type is obeyed
+        let expected = self.1;
+        let actual = seq.size_hint();
+        if expected.is_some()
+            && actual.is_some()
+            && expected != actual {
+                return Err(A::Error::custom(format!("expected seq length = {}, actual = {} ", expected.unwrap(), actual.unwrap())));
+            }
+        
+        
+	let mut elements : Vec<Value> =
+	    if let Some(length) = actual {
+		Vec::with_capacity(length)
+	    } else {
+		Vec::new()
+	    };
+
+	while let Some(value) = seq.next_element_seed(self.0)? {
+	    elements.push(value);
+	} 
+
+        if let Some(expected) = expected  {
+            if elements.len() != expected {
+                return Err(A::Error::custom(format!("expected seq length = {}, actual = {} ", expected, elements.len())));
+            }
+        }
+        
+        Ok(Value::Seq(elements))
     }
 }

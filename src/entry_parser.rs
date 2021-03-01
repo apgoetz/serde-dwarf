@@ -114,7 +114,7 @@ impl<'i> UnitResults<'i> {
                             if let Err(e) = self.add_type(builder, k) {
                                 //roll back adding the enum
                                 builder.remove_key(offset);
-                                return Err(e.extend(&format!("could not add subtype {:?} of enum {}", k, name)));
+                                return Err(e.extend(&format!("could not add subtype {:?} of enum {}: DIE is:\n{}", k, name, self.dump_type_die(offset))));
                             }
                         }
                         return Ok(());                        
@@ -122,6 +122,24 @@ impl<'i> UnitResults<'i> {
 
                     // else if it is a struct
                 } else if let Some(fields) = self.try_parse_struct(offset) {
+                    
+                    if name.starts_with("Vec<") {
+                        if let Some(params) = self.get_template_params(offset) {
+                            if let Some(subtype) = params.get(0) {
+                                builder.add_seq(offset, *subtype, None);
+                                // if we cannot add the type of this vec
+                                if let Err(e) = self.add_type(builder, *subtype) {
+                                    builder.remove_key(offset);
+                                    return Err(e.extend(&format!("could not add subtype {:?} of {}", *subtype, name)));
+                                } 
+                            } else {
+                                return Err(InternalError::new(&format!("Vec<_> has no template params:\n{}", self.dump_type_die(offset))));
+                            }
+                            return Ok(())
+                        } else {
+                            return Err(InternalError::new(&format!("cannot get Vec<_> template params:\n{}", self.dump_type_die(offset))));
+                        }
+                    }
                     
                     if fields.0.is_empty() {
                         // handle unit struct
@@ -156,11 +174,11 @@ impl<'i> UnitResults<'i> {
                         }
                     }
                     // add all of the fields in the type
-                    for (fieldname, offset) in fields.0.iter().zip(fields.1.iter()) {
-                        if let Err(e) = self.add_type(builder, *offset) {
+                    for (fieldname, f_offset) in fields.0.iter().zip(fields.1.iter()) {
+                        if let Err(e) = self.add_type(builder, *f_offset) {
                             // roll back adding the struct
-                            builder.remove_key(*offset);
-                            return Err(e.extend(&format!("could not add field {} of struct {}", fieldname, name)));
+                            builder.remove_key(offset);
+                            return Err(e.extend(&format!("could not add field {} of struct {}: DIE is: \n{}", fieldname, name, self.dump_type_die(offset))));
                         }
                     }
                     return Ok(());
@@ -221,6 +239,28 @@ impl<'i> UnitResults<'i> {
         return false
     }
 
+    fn get_template_params(&self,
+                           offset: gimli::DebugInfoOffset
+    ) -> Option<Vec<gimli::DebugInfoOffset>> {
+        let (unit, u_offset) = self.di_to_unit(offset)? ;
+        let mut cursor = unit.entries_at_offset(u_offset).ok()? ;
+        let mut depth = 0;
+        let mut params = Vec::new();
+        // skip the first DIE, since that is the struct
+        cursor.next_dfs().ok()??;
+        while let Some((delta_depth, entry)) = cursor.next_dfs().ok()? {
+            depth += delta_depth;
+            if depth <= 0 {
+                break;
+            }
+            if entry.tag() == constants::DW_TAG_template_type_parameter {
+                params.push(get_type(unit, &entry).ok()?);
+            }
+        }
+        Some(params)
+    }
+
+    
     // returns None if parsing failed
     // returns Some(_) if we found a struct
     fn try_parse_struct(&self,
