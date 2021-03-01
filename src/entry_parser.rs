@@ -99,14 +99,22 @@ impl<'i> UnitResults<'i> {
                         // get the type of the generic option
                         let variant = types.next().unwrap();
                         builder.add_option(offset, variant);
-                        return self.add_type(builder, variant);
+                        // need to roll back adding of option
+                        if let Err(e) = self.add_type(builder, variant) {
+                            builder.remove_key(offset);
+                            return Err(e.extend(&format!("Could not parse option {}", name)));
+                        } else {return Ok(()); }
                     } else  {
                         // handle the generic enum case
                         let (variants, subtypes) = self.get_variants(&variants)?;
                         builder.add_enum(offset, name, &variants);
                         // add all of the fields in the type
                         for k in subtypes {
-                            self.add_type(builder, k).map_err(|e|e.extend(&format!("could not add subtype {:?} of enum {}", k, name)))?;
+                            if let Err(e) = self.add_type(builder, k) {
+                                //roll back adding the enum
+                                builder.remove_key(offset);
+                                return Err(e.extend(&format!("could not add subtype {:?} of enum {}", k, name)));
+                            }
                         }
                         return Ok(());                        
                     }
@@ -148,7 +156,11 @@ impl<'i> UnitResults<'i> {
                     }
                     // add all of the fields in the type
                     for (fieldname, offset) in fields.0.iter().zip(fields.1.iter()) {
-                        self.add_type(builder, *offset).map_err(|e|e.extend(&format!("could not add field {} of struct {}", fieldname, name)))?;
+                        if let Err(e) = self.add_type(builder, *offset) {
+                            // roll back adding the struct
+                            builder.remove_key(*offset);
+                            return Err(e.extend(&format!("could not add field {} of struct {}", fieldname, name)));
+                        }
                     }
                     return Ok(());
                 } else {

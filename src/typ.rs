@@ -496,6 +496,11 @@ impl<K: BuilderKey> TypeBuilder<K> {
     pub fn contains_key(&self, k: K) -> bool {
         self.types.contains_key(&k)
     }
+
+    pub fn remove_key(&mut self, k: K) -> bool {
+        self.types.remove(&k).is_some()
+    }
+
     
     // escape hatch to add a raw type. Do we need this???
     fn add_type<'a>(&'a mut self, k: K, t: TypeVariant<K>) -> &'a TypeBuilder<K> {
