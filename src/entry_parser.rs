@@ -5,6 +5,7 @@ use crate::err::InternalError;
 use gimli::constants;
 use std::ops::Bound;
 use std::result;
+use std::io::Write;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::TryFrom;
 use indexmap::IndexMap;
@@ -164,14 +165,13 @@ impl<'i> UnitResults<'i> {
                     }
                     return Ok(());
                 } else {
-                    // todo: add back dump die
-                    return Err(InternalError::new(&format!("cannot add unknown DW_TAG_structure {}!", name)));
+                    return Err(InternalError::new(&format!("cannot add unknown DW_TAG_structure:\n {}", self.dump_type_die(offset))));
                 }
 
                 
             },
             constants::DW_TAG_pointer_type => {
-                return Err(InternalError::new("cannot add pointer type"));
+                return Err(InternalError::new(&format!("cannot add pointer type:\n{}", self.dump_type_die(offset))));
             }
             _ => {
                 return Err(InternalError::new(&format!("cannot add type with tag {:?}", entry.tag())));
@@ -365,30 +365,33 @@ impl<'i> UnitResults<'i> {
     fn dump_type_die (
         &self,
         offset: gimli::DebugInfoOffset,
-    ) {
+    ) -> String {
+        let mut buf = Vec::<u8>::new();
         let namespace = self.get_namespace(offset);
         if let Some((unit, offset)) = self.di_to_unit(offset) {
             if let Ok(mut cursor) = unit.entries_at_offset(offset) {
                 let mut depth = 0;
                 if let Some(Some(namespace)) = namespace {
-                    eprintln!("namespace: {}", namespace);
+                    writeln!(buf, "namespace: {}", namespace).ok();
                 }
 
                 // dump the first entry
                 if let Ok(Some((delta_depth, entry))) = cursor.next_dfs() {
                     depth += delta_depth;
-                    self.di_parser.dump_die(depth as usize, &entry).ok();
+                    self.di_parser.dump_die(&mut buf, depth as usize, &entry).ok();
                     // dump child entries
                     while let Ok(Some((delta_depth, entry))) = cursor.next_dfs() {
                         depth += delta_depth;
                         if depth <= 0 {
-                            return;
+                            break;
                         }
-                        self.di_parser.dump_die(depth as usize, &entry).ok();
+                        self.di_parser.dump_die(&mut buf, depth as usize, &entry).ok();
                     }
                 }
             }
         }
+        //print the DIE, if somehow there is non-utf8 bytes , we just replace with a placeholder
+        String::from_utf8(buf).unwrap_or(String::from("???"))
     }
     
     // converter a debuginfo offset into the unit it came from and the redirected unit offset

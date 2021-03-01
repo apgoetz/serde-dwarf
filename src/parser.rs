@@ -7,6 +7,7 @@ use rustc_demangle::demangle;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::result;
 use std::sync;
+use std::io;
 use fallible_iterator::FallibleIterator;
 use rayon::prelude::*;
 
@@ -138,39 +139,40 @@ impl<'i> DebugInfoParser<'i> {
     // helper debug functions to print info for a die
     pub fn dump_die(
         &self,
+        f: &mut dyn io::Write,
         depth: usize,
         entry: &gimli::DebuggingInformationEntry<Reader>,
     ) -> result::Result<(), gimli::Error> {
         let padding = "  ".repeat(2 * depth + 1 );
         let tag_padding = "  ".repeat(2 * depth as usize);
-        eprintln!(
+        writeln!(f,
             "{}<{}>{}",
             tag_padding,
             depth,
             entry.tag().static_string().unwrap()
-        );
+        ).ok();
 
         let mut attrs = entry.attrs();
 
         while let Some(attr) = attrs.next()? {
-            eprint!("{}", padding);
+            write!(f,"{}", padding).ok();
 
             if let Some(n) = attr.name().static_string() {
-                eprint!("{}: ", n);
+                write!(f,"{}: ", n).ok();
             } else {
-                eprint!("{:27}: ", attr.name());
+                write!(f,"{:27}: ", attr.name()).ok();
             }
 
             if let gimli::AttributeValue::DebugStrRef(offset) = attr.value() {
                 let string = self.dwarf.debug_str.get_str(offset)?;
                 let string = demangle(string.to_string()?).to_string();
-                eprintln!("{}", string);
+                writeln!(f,"{}", string).ok();
             } else if let Some(num) = attr.udata_value() {
-                eprintln!("{}", num);
+                writeln!(f,"{}", num).ok();
             } else if let gimli::AttributeValue::UnitRef(offset) = attr.value() {
-                eprintln!("unit+{:#010x}", offset.0);
+                writeln!(f,"unit+{:#010x}", offset.0).ok();
             } else {
-                eprintln!("??? {:#?}", attr.value());
+                writeln!(f,"??? {:#?}", attr.value()).ok();
             }
         }
         Ok(())
